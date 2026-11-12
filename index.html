@@ -560,7 +560,8 @@ function salvaNuovo(x){
   var note=[];if(x.prod.length)note.push('Prodotti: '+x.prod.join(', '));if(x.sig.length)note.push('Sigilli: '+x.sig.join(', '));
   if(x.pag.length)note.push('Pagamento: '+x.pag.join(', '));if(x.altro)note.push('Altro: '+x.altro.replace(/\s*\n\s*/g,' / '));
   var given='Tram '+x.comune+' '+x.locale, full=(given+' '+x.ref).trim();
-  var body={names:[{givenName:given,familyName:x.ref}],phoneNumbers:[{value:x.tel,type:/^\+39 3/.test(x.tel)?'mobile':'work'}],
+  // nome TUTTO su una riga nel campo Nome (regola di Jacopo 12/11): niente cognome
+  var body={names:[{givenName:full}],phoneNumbers:[{value:x.tel,type:/^\+39 3/.test(x.tel)?'mobile':'work'}],
     addresses:[{streetAddress:(via+(num?', '+num:'')).trim(),city:city,region:comp(pl,'administrative_area_level_2').shortText,postalCode:comp(pl,'postal_code').longText,country:'Italia',type:'work'}],
     urls:pl.googleMapsURI?[{value:pl.googleMapsURI.replace(/&.*$/,''),type:'work'}]:[],biographies:note.length?[{value:note.join('\n'),contentType:'TEXT_PLAIN'}]:[]};
   if(x.az||x.piva||x.sdi)body.organizations=[{name:x.az,title:x.piva?'P.IVA '+x.piva:'',department:x.sdi?'SDI '+x.sdi:'',type:'work'}];
