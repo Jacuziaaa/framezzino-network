@@ -126,6 +126,9 @@ input,textarea,select{font-family:inherit;color:var(--text)}
 @media (max-width:820px){
   #side{position:absolute;left:0;right:0;bottom:0;width:auto;height:46vh;border-left:none;border-top:1.5px solid var(--border);border-radius:18px 18px 0 0;box-shadow:0 -4px 16px rgba(0,0,0,.08);transition:height .25s;z-index:4}
   #side.min{height:82px}
+  #side.max{height:calc(100% - 12px)}   /* trascinato in alto: elenco quasi a tutto schermo */
+  #side.drag{transition:none}
+  #shead{touch-action:none}
   /* striscia alta in alto solo per la maniglia; sotto, ordinamento (stretto) e Nuovo stanno a destra, lontani dal centro */
   #shead{cursor:pointer;padding:32px 14px 10px}
   #shead:before{content:'';position:absolute;left:50%;top:12px;transform:translateX(-50%);width:48px;height:5px;border-radius:3px;background:#c9d0d8}
@@ -144,7 +147,7 @@ input,textarea,select{font-family:inherit;color:var(--text)}
 }
 @media (min-width:640px) and (max-width:820px){ /* Fold aperto: mappa + elenco affiancati */
   #side{position:static;width:300px;height:auto;border-left:1.5px solid var(--border);border-top:none;border-radius:0;box-shadow:none;transition:none}
-  #side.min{height:auto}
+  #side.min,#side.max{height:auto}
   #shead{cursor:default;padding:10px 14px}
   #shead:before{display:none}
 }
@@ -199,7 +202,7 @@ input,textarea,select{font-family:inherit;color:var(--text)}
     <div id="map"></div>
     <div id="mapmsg"></div>
     <div id="empty"><div style="font-size:36px">🗺️</div><b>Nessun cliente ancora</b><p>Importa il file dei clienti verificati (<i>import_clienti.json</i>). I dati verranno cifrati prima di essere salvati.</p><button class="pbtn" id="emptyimp">Importa clienti</button></div>
-    <div id="side">
+    <div id="side" class="min">
       <div id="shead"><span id="scount"></span>
         <button id="newbtn" title="Nuovo cliente">＋ Nuovo</button>
         <select id="sort" title="Ordina l'elenco"><option value="zona">Zona</option><option value="nome">Nome</option><option value="vicino">Vicini</option></select>
@@ -411,7 +414,46 @@ document.getElementById('sort').addEventListener('change',function(){S.sort=this
   if(S.sort==='vicino'&&!S.me){if(!navigator.geolocation){toast('Posizione non disponibile',true);return;}
     navigator.geolocation.getCurrentPosition(function(p){S.me={lat:p.coords.latitude,lng:p.coords.longitude};renderList();if(map){map.panTo(S.me);map.setZoom(12);}},function(){toast('Permesso posizione negato',true);});}
   renderList();});
-document.getElementById('shead').addEventListener('click',function(e){if(e.target.id==='sort')return;if(window.innerWidth<640)document.getElementById('side').classList.toggle('min');});
+// ── pannello dal basso (telefono): 3 altezze — chiuso, metà, grande. Tocco sulla maniglia: chiuso <-> metà;
+//    trascinamento dalla maniglia: segue il dito e si ferma sull'altezza più vicina ──
+(function(){
+  var side=document.getElementById('side'),head=document.getElementById('shead');
+  var drag=null,mosso=false,ignoraClick=false;
+  function telefono(){return window.innerWidth<640;}
+  function altezze(){var tot=side.parentNode.clientHeight;return {min:82,mid:Math.round(tot*0.46),max:tot-12};}
+  function stato(nome){side.classList.toggle('min',nome==='min');side.classList.toggle('max',nome==='max');}
+  function suPulsante(t){return t.closest&&t.closest('#sort,#newbtn');}
+  head.addEventListener('pointerdown',function(e){
+    if(!telefono()||suPulsante(e.target))return;
+    drag={y:e.clientY,h:side.offsetHeight,id:e.pointerId,t:Date.now()};mosso=false;
+    try{head.setPointerCapture(e.pointerId);}catch(x){}
+  });
+  head.addEventListener('pointermove',function(e){
+    if(!drag||e.pointerId!==drag.id)return;
+    var dy=drag.y-e.clientY;if(!mosso&&Math.abs(dy)<6)return;
+    if(!mosso){mosso=true;side.classList.add('drag');}
+    var a=altezze();side.style.height=Math.max(a.min,Math.min(a.max,drag.h+dy))+'px';
+  });
+  function fine(e){
+    if(!drag||e.pointerId!==drag.id)return;
+    var d=drag;drag=null;
+    if(!mosso)return;                      // era un tocco: ci pensa il click
+    ignoraClick=true;setTimeout(function(){ignoraClick=false;},350);
+    var a=altezze(),h=side.offsetHeight,v=(d.y-e.clientY)/Math.max(1,Date.now()-d.t);  // px/ms, + = verso l'alto
+    var cand=[['min',a.min],['mid',a.mid],['max',a.max]],best=cand[0];
+    cand.forEach(function(c){if(Math.abs(c[1]-h)<Math.abs(best[1]-h))best=c;});
+    if(Math.abs(v)>0.6){                   // gesto veloce: va all'altezza successiva nella direzione del dito
+      var su=cand.filter(function(c){return c[1]>h+5;}),giu=cand.filter(function(c){return c[1]<h-5;});
+      if(v>0&&su.length)best=su[0];else if(v<0&&giu.length)best=giu[giu.length-1];
+    }
+    side.classList.remove('drag');side.style.height='';stato(best[0]);
+  }
+  head.addEventListener('pointerup',fine);head.addEventListener('pointercancel',fine);
+  head.addEventListener('click',function(e){
+    if(suPulsante(e.target)||!telefono()||ignoraClick)return;
+    stato(side.classList.contains('min')?'mid':'min');
+  });
+})();
 
 // ── DETTAGLIO ─────────────────────────────────────────────────────────────
 function openOv(content){var m=document.getElementById('modal');m.innerHTML='';m.appendChild(el('div',{cls:'mh'}));content.forEach(function(x){m.appendChild(x);});document.getElementById('ov').classList.add('show');}
