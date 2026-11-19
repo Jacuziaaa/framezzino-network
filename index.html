@@ -750,7 +750,7 @@ function aggiornaDaRubrica(daTocco){
         .then(function(){return [scrivi.length,togli.length];});
     });
   }).then(function(n){
-    try{localStorage.setItem('fn_sync_'+(SY.rubrica||''),String(Date.now()));}catch(e){}
+    try{localStorage.setItem('fn_sync_'+(SY.rubrica||''),String(Date.now()));localStorage.setItem('fn_rubrica',SY.rubrica||'');}catch(e){}
     SY.running=false;segnaSync();
     if(daTocco||n[0]||n[1])toast('Mappa aggiornata dalla rubrica ✓'+(n[0]?' · '+n[0]+' locali aggiornati':'')+(n[1]?' · '+n[1]+' tolti':'')+(!n[0]&&!n[1]?' · niente da cambiare':''));
     if(SY.decidere.length&&!daTocco)toast(SY.decidere.length+(SY.decidere.length===1?' contatto da decidere':' contatti da decidere')+': tocca 🔄');
@@ -759,15 +759,62 @@ function aggiornaDaRubrica(daTocco){
 function segnaSync(){var d=document.getElementById('sydot'),b=document.getElementById('sybtn');if(!d)return;
   d.classList.toggle('on',!!SY.decidere.length||!SY.quando);d.style.background=SY.decidere.length?'var(--red)':'var(--orange)';
   b.classList.toggle('spin',SY.running);}
+// ── SCRIPT NEL CLOUD (GitHub, repository privato) avviato dal 🔄: sistema la rubrica di chi usa l'app, poi la mappa ──
+// La chiave GitHub (solo "Actions" sul repository framezzino-sync) e' salvata CIFRATA con la password della mappa.
+var GH={repo:'Jacuziaaa/framezzino-sync',wf:'rubriche.yml',tok:null},GHDOC=db.collection('network_meta').doc('github');
+function ghToken(){if(GH.tok!==null)return Promise.resolve(GH.tok);
+  return GHDOC.get().then(function(s){if(!s.exists||!s.data().d){GH.tok='';return '';}
+    return dec(s.data().d).then(function(o){GH.tok=(o&&o.t)||'';return GH.tok;}).catch(function(){GH.tok='';return '';});}).catch(function(){GH.tok='';return '';});}
+function salvaGhToken(t){return enc({t:t}).then(function(d){return GHDOC.set({d:d,aggiornato:new Date().toISOString(),da:S.user.email});}).then(function(){GH.tok=t;});}
+function ghApi(path,method,body){return fetch('https://api.github.com/repos/'+GH.repo+path,{method:method||'GET',
+    headers:{Authorization:'Bearer '+GH.tok,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},body:body?JSON.stringify(body):undefined})
+  .then(function(r){if(r.status===204)return {};return r.json().catch(function(){return {};}).then(function(j){
+    if(!r.ok)throw new Error(r.status===401||r.status===403||r.status===404?'La chiave GitHub non è valida o è scaduta: incollane una nuova (🔄 → Chiave GitHub).':'GitHub: '+(j.message||r.status));return j;});});}
+function lanciaScript(account){
+  var t0=Date.now()-15000,giri=0;
+  function attesa(ms){return new Promise(function(r){setTimeout(r,ms);});}
+  function poll(){giri++;return attesa(giri<3?4000:6000).then(function(){return ghApi('/actions/workflows/'+GH.wf+'/runs?event=workflow_dispatch&per_page=5');})
+    .then(function(j){var run=(j.workflow_runs||[]).find(function(x){return new Date(x.created_at).getTime()>=t0;});
+      if(!run){if(giri>12)throw new Error('Lo script nel cloud non è partito: riprova tra poco.');return poll();}
+      if(run.status!=='completed'){if(giri>60)throw new Error('Lo script nel cloud ci sta mettendo troppo: la mappa si aggiorna al prossimo 🔄.');return poll();}
+      if(run.conclusion!=='success')throw new Error('Lo script nel cloud non è andato a buon fine (GitHub manda un\'email con i dettagli): aggiorno lo stesso la mappa.');
+      return run;});}
+  return ghApi('/actions/workflows/'+GH.wf+'/dispatches','POST',{ref:'main',inputs:{account:account}}).then(poll);
+}
+// 🔄 dal pannello: accesso Google (finestra dal tocco), script nel cloud per la MIA rubrica, poi mappa dalla rubrica
+function sistemaEAggiorna(){
+  if(SY.running)return;
+  var mia=(SY.rubrica||(function(){try{return localStorage.getItem('fn_rubrica')||'';}catch(e){return '';}})()).toLowerCase();
+  var account=mia==='jacopo'||mia==='marco'?mia:'entrambi';
+  googleToken().then(ghToken).then(function(t){
+    if(!t){toast('Script nel cloud non collegato: aggiorno solo la mappa (🔄 → Chiave GitHub per collegarlo).',true);return;}
+    SY.running=true;SY.fase='script';segnaSync();
+    toast('Sistemo la rubrica'+(account==='entrambi'?'':' di '+account.charAt(0).toUpperCase()+account.slice(1))+' nel cloud… (circa 1 minuto)');
+    return lanciaScript(account).catch(function(e){toast(e.message,true);}).then(function(){SY.running=false;SY.fase='';});
+  }).then(function(){aggiornaDaRubrica(true);}).catch(function(e){SY.running=false;SY.fase='';segnaSync();toast(e.message,true);});
+}
+function openGhKey(){
+  var inp=el('input',{cls:'fi',type:'password',placeholder:'github_pat_…',autocomplete:'off'}),err=el('div',{cls:'ferr'});
+  var b=el('button',{cls:'sbtn',style:'background:var(--orange);color:#fff;width:100%;margin-top:12px',text:'Salva la chiave (cifrata)',onclick:function(){
+    var t=inp.value.trim();err.textContent='';if(!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(t)){err.textContent='Non sembra una chiave GitHub (inizia con github_pat_).';return;}
+    b.disabled=true;b.textContent='Controllo la chiave…';var vecchia=GH.tok;GH.tok=t;
+    ghApi('/actions/workflows/'+GH.wf).then(function(){return salvaGhToken(t);}).then(function(){closeOv();toast('Script nel cloud collegato ✓');})
+      .catch(function(e){GH.tok=vecchia;err.textContent=e.message;b.disabled=false;b.textContent='Salva la chiave (cifrata)';});}});
+  openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Chiave GitHub'}),el('div',{cls:'msub',text:'Serve al 🔄 per avviare lo script che sistema la rubrica'})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
+    el('div',{cls:'mbody'},[el('p',{cls:'msub',style:'margin-top:0',text:'Incolla la chiave creata su GitHub (solo permesso "Actions" sul repository framezzino-sync). Viene salvata cifrata con la password della mappa: vale anche sul telefono di Marco.'}),inp,err,b])]);
+}
 function openSync(){
   var lista=SY.decidere.map(function(x){return el('div',{cls:'ref'},[el('div',{cls:'refn',text:x.nome||'(senza nome)'}),el('div',{cls:'refc',text:x.motivo+(x.data?' · '+x.data:'')}),
     el('div',{cls:'acts'},[el('a',{cls:'act',href:'https://contacts.google.com/person/'+x.rn.split('/').pop(),target:'_blank',rel:'noopener',text:'✏️ Apri in Google Contatti'})])]);});
-  var btn=el('button',{cls:'sbtn',style:'background:var(--orange);color:#fff;width:100%',text:SY.running?'Aggiornamento in corso…':'🔄 Aggiorna la mappa dalla mia rubrica',
-    onclick:function(){closeOv();aggiornaDaRubrica(true);}});
+  var btn=el('button',{cls:'sbtn',style:'background:var(--orange);color:#fff;width:100%',
+    text:SY.running?(SY.fase==='script'?'Sistemo la rubrica nel cloud…':'Aggiornamento in corso…'):'🔄 Sistema la rubrica e aggiorna la mappa',
+    onclick:function(){closeOv();sistemaEAggiorna();}});
+  var chiave=el('button',{cls:'act',style:'justify-content:flex-start;margin-top:8px;width:100%',text:'🔑 Chiave GitHub per lo script nel cloud…',onclick:function(){closeOv();openGhKey();}});
+  ghToken().then(function(t){chiave.textContent=t?'🔑 Script nel cloud collegato ✓ (cambia chiave)':'🔑 Collega lo script nel cloud (chiave GitHub)';});
   openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Rubrica e mappa'}),
       el('div',{cls:'msub',text:SY.quando?('Ultimo aggiornamento: '+SY.quando.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})+(SY.rubrica?' · rubrica di '+SY.rubrica:'')):'Non ancora aggiornata in questa sessione'})]),
       el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
-    el('div',{cls:'mbody'},[btn,
+    el('div',{cls:'mbody'},[btn,chiave,
       el('div',{cls:'sec',style:'margin-top:16px',text:'Da decidere'+(SY.decidere.length?' ('+SY.decidere.length+')':'')}),
       SY.quando?(lista.length?el('div',{},lista):el('div',{cls:'msub',text:'Niente da decidere ✓'})):el('div',{cls:'msub',text:'Aggiorna dalla rubrica per vedere i contatti da decidere.'}),
       lista.length?el('p',{cls:'msub',style:'margin-top:10px',text:'Sono clienti che lo script non ha saputo sistemare da solo (locale non trovato su Google, nome troppo corto, possibile doppione…). Correggi il contatto in rubrica: al prossimo giro lo script lo riprova.'}):null,
@@ -806,7 +853,11 @@ function doRekey(btn,err){
   .then(function(k){newK=k;return CCOL.get();})
   .then(function(snap){
     return Promise.all(snap.docs.map(function(d){return dec(d.data().d,oldK).then(function(c){delete c._id;return enc(c,newK).then(function(x){return {ref:d.ref,d:x};});});}))
-    .then(function(rows){return enc(CHECK,newK).then(function(chk){return {rows:rows,chk:chk};});});
+    .then(function(rows){return enc(CHECK,newK).then(function(chk){return {rows:rows,chk:chk};});})
+    .then(function(r){  // anche la chiave GitHub dello script nel cloud va ricifrata con la nuova password
+      return GHDOC.get().then(function(s){if(!s.exists||!s.data().d)return r;
+        return dec(s.data().d,oldK).then(function(o){return enc(o,newK);}).then(function(x){r.rows.push({ref:GHDOC,d:x,gh:true});return r;},function(){return r;});});
+    });
   })
   .then(function(r){
     if(r.rows.length+1>500)throw new Error('toomany');  // un solo batch = tutto o niente
