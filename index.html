@@ -313,9 +313,11 @@ function startApp(){
   show('app');initMap();loadGis().catch(function(){});
   if(unsub)unsub();
   unsub=CCOL.onSnapshot(function(snap){
-    Promise.all(snap.docs.map(function(d){return dec(d.data().d).then(function(c){c._id=d.id;return c;}).catch(function(){return null;});}))
+    var daFinire=[];
+    Promise.all(snap.docs.map(function(d){return decD(d.data()).then(function(c){if(c.__dn){delete c.__dn;daFinire.push(d.ref);}c._id=d.id;return c;}).catch(function(){return null;});}))
     .then(function(list){
       if(S.rekeying)return;
+      if(daFinire.length)finisciRekey(daFinire);  // cambio password interrotto a meta': lo completo
       if(snap.docs.length&&!list.some(Boolean)){  // password cambiata da un altro dispositivo
         return verifyKey(S.key).then(function(ok){if(ok)return;if(unsub)unsub();S.key=null;S.clients=[];dropKey();toast('La password di cifratura è stata cambiata: inserisci quella nuova.',true);askCrypto();});}
       S.clients=list.filter(Boolean);assignColors();applyFilters();
@@ -764,7 +766,7 @@ function segnaSync(){var d=document.getElementById('sydot'),b=document.getElemen
 var GH={repo:'Jacuziaaa/framezzino-sync',wf:'rubriche.yml',tok:null},GHDOC=db.collection('network_meta').doc('github');
 function ghToken(){if(GH.tok!==null)return Promise.resolve(GH.tok);
   return GHDOC.get().then(function(s){if(!s.exists||!s.data().d){GH.tok='';return '';}
-    return dec(s.data().d).then(function(o){GH.tok=(o&&o.t)||'';return GH.tok;}).catch(function(){GH.tok='';return '';});}).catch(function(){GH.tok='';return '';});}
+    return decD(s.data()).then(function(o){if(o&&o.__dn)finisciRekey([GHDOC]);GH.tok=(o&&o.t)||'';return GH.tok;}).catch(function(){GH.tok='';return '';});}).catch(function(){GH.tok='';return '';});}
 function salvaGhToken(t){return enc({t:t}).then(function(d){return GHDOC.set({d:d,aggiornato:new Date().toISOString(),da:S.user.email});}).then(function(){GH.tok=t;});}
 function ghApi(path,method,body){return fetch('https://api.github.com/repos/'+GH.repo+path,{method:method||'GET',
     headers:{Authorization:'Bearer '+GH.tok,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},body:body?JSON.stringify(body):undefined})
@@ -860,17 +862,35 @@ function doRekey(btn,err){
     });
   })
   .then(function(r){
-    if(r.rows.length+1>500)throw new Error('toomany');  // un solo batch = tutto o niente
+    // Firestore scrive al massimo 500 documenti per volta: si lavora a blocchi, in tre fasi sicure.
+    // 1) accanto a ogni scheda si scrive la copia con la password nuova (campo "dn"): la vecchia "d" resta,
+    //    se qualcosa si interrompe qui non e' cambiato niente (la password valida resta la vecchia);
+    // 2) un solo salvataggio rende valida la password nuova;
+    // 3) "dn" diventa "d". Se si interrompe qui, l'app legge "dn" e completa da sola (finisciRekey).
     S.rekeying=true;
-    var b=db.batch(),now=new Date().toISOString();
-    r.rows.forEach(function(x){b.set(x.ref,{d:x.d,v:1,aggiornato:now,da:S.user.email});});
-    b.set(META,{check:r.chk,creato:now,da:S.user.email,cambiata:true});
-    return b.commit().then(function(){return r.rows.length;});
+    var now=new Date().toISOString(),FV=firebase.firestore.FieldValue;
+    return aBlocchi(r.rows,function(b,x){b.set(x.ref,{dn:x.d},{merge:true});})
+    .then(function(){return META.set({check:r.chk,creato:now,da:S.user.email,cambiata:true});})
+    .then(function(){S.key=newK;saveKey(newK);
+      return aBlocchi(r.rows,function(b,x){b.update(x.ref,{d:x.d,dn:FV.delete(),v:1,aggiornato:now,da:S.user.email});});})
+    .then(function(){return r.rows.filter(function(x){return !x.gh;}).length;});
   })
-  .then(function(n){S.key=newK;saveKey(newK);S.rekeying=false;closeOv();startApp();toast('Password cambiata · '+n+' clienti ricifrati ✓');})
+  .then(function(n){S.rekeying=false;closeOv();startApp();toast('Password cambiata · '+n+' clienti ricifrati ✓');})
   .catch(function(e){S.rekeying=false;btn.disabled=false;btn.textContent='Cambia password';
-    err.textContent=e.message==='wrong'?'La password attuale non è corretta.':e.message==='toomany'?'Troppi clienti per un cambio in un colpo solo: contatta l\'assistenza.':(e.name==='OperationError'?'Alcuni dati non si decifrano con la password attuale: nulla è stato cambiato.':permMsg(e));});
+    if(S.key===newK){closeOv();startApp();toast('Password cambiata: alcune schede si completano alla prossima apertura.',true);return;}
+    err.textContent=e.message==='wrong'?'La password attuale non è corretta.':(e.name==='OperationError'?'Alcuni dati non si decifrano con la password attuale: nulla è stato cambiato.':permMsg(e)+' · Nulla è stato cambiato: la password resta quella attuale.');});
 }
+// scrive una lista a blocchi da 400 (limite Firestore: 500 per volta)
+function aBlocchi(lista,fn){var p=Promise.resolve();
+  for(var i=0;i<lista.length;i+=400)(function(ch){p=p.then(function(){var b=db.batch();ch.forEach(function(x){fn(b,x);});return b.commit();});})(lista.slice(i,i+400));
+  return p;}
+// legge una scheda: se e' a meta' di un cambio password, la copia buona e' in "dn"
+function decD(data){return dec(data.d).catch(function(e){if(!data.dn)throw e;return dec(data.dn).then(function(c){if(c&&typeof c==='object')c.__dn=true;return c;});});}
+function finisciRekey(refs){  // ripetibile senza danni: riscrive solo dove c'e' ancora "dn"
+  var now=new Date().toISOString(),FV=firebase.firestore.FieldValue;
+  Promise.all(refs.map(function(ref){return ref.get().then(function(s){return s.data()&&s.data().dn?{ref:ref,dn:s.data().dn}:null;});}))
+  .then(function(l){return aBlocchi(l.filter(Boolean),function(b,x){b.update(x.ref,{d:x.dn,dn:FV.delete(),aggiornato:now,da:S.user.email});});})
+  .catch(function(){});}
 </script>
 </body>
 </html>
