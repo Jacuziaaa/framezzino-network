@@ -684,6 +684,9 @@ function ricomponi(c,refs,dm){
     if(refs.some(function(r){return !r[k];}))(c[k]||[]).forEach(add);
     refs.forEach(function(r){(r[k]||[]).forEach(add);});n[k]=tutti;});
   n.sigilli=n.sigilli.filter(function(s){return n.sigilli.indexOf(s+' (omaggio)')<0;});
+  // "sì" (sigilli senza tipo) e' un doppione se il tipo c'e' gia' ("Personalizzati" + "sì")
+  var tipi=n.sigilli.filter(function(s){return !/^s[iì]\b/i.test(s);});
+  if(tipi.length)n.sigilli=tipi;
   ['azienda','piva','sdi'].forEach(function(k){var r=refs.find(function(r){return r[k];});if(r)n[k]=r[k];else if(n[k]==null)n[k]='';});
   if(dm&&!n.lat){['nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona'].forEach(function(k){if(dm[k]!=null)n[k]=dm[k];});
     if(!n.locale)n.locale=dm.locale||dm.nomeGoogle;}
