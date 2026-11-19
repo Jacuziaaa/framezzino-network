@@ -57,6 +57,7 @@ input,textarea,select{font-family:inherit;color:var(--text)}
 .hb{font-size:18px;color:var(--sub);padding:6px 8px;border-radius:10px;position:relative}
 .hb .dot{position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--orange);display:none}
 .hb .dot.on{display:block}
+.hb.spin{animation:fnspin 1s linear infinite}@keyframes fnspin{to{transform:rotate(360deg)}}
 #body{flex:1;display:flex;min-height:0;position:relative}
 #map{flex:1;min-width:0}
 #side{width:380px;background:var(--surface);border-left:1.5px solid var(--border);display:flex;flex-direction:column;min-height:0}
@@ -196,6 +197,7 @@ input,textarea,select{font-family:inherit;color:var(--text)}
     <button class="hb" id="fbtn" title="Filtri">⚙︎<span class="dot" id="fdot"></span></button>
     <a class="hb" href="https://jacuziaaa.github.io/deliverysync/" title="DeliverySync (consegne)" style="text-decoration:none">🚚</a>
     <button class="hb" id="stbtn" title="Statistiche">📊</button>
+    <button class="hb" id="sybtn" title="Aggiorna dalla rubrica · Da decidere">🔄<span class="dot" id="sydot"></span></button>
     <button class="hb" id="mbtn" title="Menu">☰</button>
   </div>
   <div id="body">
@@ -308,7 +310,7 @@ document.getElementById('cpw').addEventListener('keydown',function(e){if(e.key==
 
 // ── DATI ──────────────────────────────────────────────────────────────────
 function startApp(){
-  show('app');initMap();
+  show('app');initMap();loadGis().catch(function(){});
   if(unsub)unsub();
   unsub=CCOL.onSnapshot(function(snap){
     Promise.all(snap.docs.map(function(d){return dec(d.data().d).then(function(c){c._id=d.id;return c;}).catch(function(){return null;});}))
@@ -317,7 +319,9 @@ function startApp(){
       if(snap.docs.length&&!list.some(Boolean)){  // password cambiata da un altro dispositivo
         return verifyKey(S.key).then(function(ok){if(ok)return;if(unsub)unsub();S.key=null;S.clients=[];dropKey();toast('La password di cifratura è stata cambiata: inserisci quella nuova.',true);askCrypto();});}
       S.clients=list.filter(Boolean);assignColors();applyFilters();
-      document.getElementById('empty').style.display=S.clients.length?'none':'block';});
+      document.getElementById('empty').style.display=S.clients.length?'none':'block';
+      // prima lettura: se l'accesso Google e' ancora valido la mappa si aggiorna subito dalla rubrica
+      if(!S.syncAvviato){S.syncAvviato=true;segnaSync();if(gTok&&gTok.exp>Date.now()+60000)aggiornaDaRubrica(false);}});
   },function(e){toast(permMsg(e),true);});
 }
 function assignColors(){var zs={};S.clients.forEach(function(c){zs[c.zona]=1;});Object.keys(zs).sort().forEach(function(z,i){zoneColor[z]=z==='Fuori zona'?'#64748b':ZCOL[i%ZCOL.length];});}
@@ -583,7 +587,7 @@ function openNewClient(){
       pag:PAGAMENTI.filter(function(x){return st.pag[x];}),place:st.place};
     if(st.omaggio&&!dati.sig.length){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
     save.disabled=true;save.textContent='Accesso a Google…';
-    function go(){salvaNuovo(dati).then(function(c){closeOv();toast('Cliente salvato in rubrica e sulla mappa ✓');setTimeout(function(){openDetail(docId(c.id),true);},900);})
+    function go(){salvaNuovo(dati).then(function(c){closeOv();toast('Cliente salvato in rubrica e sulla mappa ✓');setTimeout(function(){openDetail(c._doc||docId(c.id),true);},900);})
       .catch(function(e){err.textContent=e.message;save.disabled=false;save.textContent='Salva in rubrica e sulla mappa';});}
     if(gTok&&gTok.exp>Date.now()+60000){go();return;}
     // la finestra di accesso Google deve partire dal tocco: niente attese prima di requestAccessToken
@@ -607,6 +611,10 @@ function salvaNuovo(x){
     addresses:[{streetAddress:(via+(num?', '+num:'')).trim(),city:city,region:comp(pl,'administrative_area_level_2').shortText,postalCode:comp(pl,'postal_code').longText,country:'Italia',type:'work'}],
     urls:pl.googleMapsURI?[{value:pl.googleMapsURI.replace(/&.*$/,''),type:'work'}]:[],biographies:note.length?[{value:note.join('\n'),contentType:'TEXT_PLAIN'}]:[]};
   if(x.az||x.piva||x.sdi)body.organizations=[{name:x.az,title:x.piva?'P.IVA '+x.piva:'',department:x.sdi?'SDI '+x.sdi:'',type:'work'}];
+  // campo nascosto con i dati per la mappa (lo stesso che scrive lo script): la mappa si aggiorna dalla rubrica
+  var dm={placeId:pl.id,locale:x.locale,nomeGoogle:pl.displayName||'',comune:city||x.comune,provincia:comp(pl,'administrative_area_level_2').shortText,
+    indirizzo:pl.formattedAddress||'',lat:lat,lng:lng,maps:(pl.googleMapsURI||'').replace(/&.*$/,''),telefonoLocale:pl.nationalPhoneNumber||'',zona:x.zona};
+  body.clientData=[{key:'framezzino',value:JSON.stringify(dm)}];
   var person;
   return papi('people:createContact?personFields=names','POST',body).then(function(p){person=p;
     return papi('contactGroups?pageSize=1000&groupFields=name,groupType');
@@ -618,17 +626,151 @@ function salvaNuovo(x){
   }).then(function(ids){
     return Promise.all(ids.map(function(id){return papi(id+'/members:modify','POST',{resourceNamesToAdd:[person.resourceName]});}));
   }).then(function(){
-    var gia=S.clients.filter(function(c){return (c.placeId||c.id)===pl.id;}).length;
-    var c={id:pl.id+'__'+person.resourceName.split('/').pop(),placeId:pl.id,locale:x.locale,nomeGoogle:pl.displayName||'',comune:city||x.comune,
-      provincia:comp(pl,'administrative_area_level_2').shortText,indirizzo:pl.formattedAddress||'',lat:lat+0.00005*gia,lng:lng+0.00005*gia,
-      maps:pl.googleMapsURI||'',telefonoLocale:pl.nationalPhoneNumber||'',zona:x.zona,azienda:x.az,piva:x.piva,sdi:x.sdi,
-      prodotti:x.prod,sigilli:x.sig,pagamento:x.pag,note:x.altro?[x.altro]:[],
-      referenti:[{nome:x.ref,telefoni:[x.tel],contatto:full,resourceName:person.resourceName}]};
-    return enc(c).then(function(d){return CCOL.doc(docId(c.id)).set({d:d,v:1,aggiornato:new Date().toISOString(),da:S.user.email});})
-      .then(function(){return c;},function(e){throw new Error('Salvato in rubrica ma non sulla mappa: '+permMsg(e));});
+    // un pallino per locale: se il locale e' gia' sulla mappa il cliente diventa un referente in piu' della sua scheda
+    var ref={nome:x.ref,telefoni:[x.tel],contatto:full,resourceName:person.resourceName,rubrica:rubricaMia()||'',
+      prodotti:x.prod,sigilli:x.sig,pagamento:x.pag,note:x.altro?[x.altro]:[],azienda:x.az,piva:x.piva,sdi:x.sdi};
+    var gia=S.clients.find(function(c){return (c.placeId||c.id)===pl.id;});
+    var c=gia?ricomponi(gia,(gia.referenti||[]).concat([ref]),null)
+      :ricomponi({id:pl.id,placeId:pl.id,locale:x.locale,nomeGoogle:pl.displayName||'',comune:city||x.comune,
+      provincia:comp(pl,'administrative_area_level_2').shortText,indirizzo:pl.formattedAddress||'',lat:lat,lng:lng,
+      maps:pl.googleMapsURI||'',telefonoLocale:pl.nationalPhoneNumber||'',zona:x.zona},[ref],null);
+    var docRef=gia?CCOL.doc(gia._id):CCOL.doc(docId(c.id));
+    return enc(c).then(function(d){return docRef.set({d:d,v:1,aggiornato:new Date().toISOString(),da:S.user.email});})
+      .then(function(){c._doc=docRef.id;return c;},function(e){throw new Error('Salvato in rubrica ma non sulla mappa: '+permMsg(e));});
   });
 }
 document.getElementById('newbtn').addEventListener('click',function(e){e.stopPropagation();openNewClient();});
+
+// ── RUBRICA → MAPPA (19/11): la mappa si aggiorna dalla rubrica Google di chi usa l'app ──────────────────
+// Ogni cliente in rubrica ha un campo nascosto "framezzino" (scritto dallo script o da "+ Nuovo") con il locale Google.
+// Un pallino per locale: la scheda tiene i referenti di tutte e due le rubriche; si aggiornano solo quelli della
+// rubrica letta. I contatti che lo script non ha saputo sistemare hanno "framezzino_decidere": vanno in "Da decidere".
+var SY={running:false,decidere:[],senza:0,quando:null,rubrica:null};
+try{var _gt=JSON.parse(localStorage.getItem('fn_gtok')||'null');if(_gt&&_gt.exp>Date.now()+60000)gTok=_gt;}catch(e){}
+function googleToken(){
+  return new Promise(function(res,rej){
+    if(gTok&&gTok.exp>Date.now()+60000)return res(gTok);
+    if(!window.GOOGLE_CLIENT_ID)return rej(new Error('Manca l\'ID client Google in config.js'));
+    if(!(window.google&&google.accounts&&google.accounts.oauth2)){loadGis().catch(function(){});return rej(new Error('Accesso Google non ancora caricato: riprova tra un secondo.'));}
+    gClient=google.accounts.oauth2.initTokenClient({client_id:window.GOOGLE_CLIENT_ID,scope:'https://www.googleapis.com/auth/contacts',
+      callback:function(r){if(r.error)return rej(new Error('Accesso Google non riuscito ('+r.error+')'));
+        gTok={t:r.access_token,exp:Date.now()+(r.expires_in||3600)*1000};try{localStorage.setItem('fn_gtok',JSON.stringify(gTok));}catch(e){}res(gTok);},
+      error_callback:function(e){rej(new Error('Accesso Google annullato'+(e&&e.type==='popup_failed_to_open'?': consenti i popup per questo sito':'')));}});
+    gClient.requestAccessToken();
+  });
+}
+function cdato(p,k){var x=(p.clientData||[]).find(function(c){return c.key===k;});if(!x)return null;try{return JSON.parse(x.value);}catch(e){return null;}}
+function righeNota(note,k){var m=(note||'').match(new RegExp('^'+k+':[ \\t]*(.+)$','m'));return m?m[1].split(',').map(function(x){return x.trim();}).filter(Boolean):[];}
+function altroNota(note){var m=(note||'').match(/^Altro:[ \t]*([\s\S]+)$/m);return m&&m[1].trim()?[m[1].trim()]:[];}
+function rubricaMia(){return SY.rubrica;}
+// nomi dei prodotti/sigilli/pagamenti come nei filtri, a prescindere da maiuscole ("Maxi Tostone" = "Maxi tostone")
+function canon(v,lista){var b=(v||'').trim(),l=b.toLowerCase(),om=/\s*\(omaggio\)$/i.test(b)?' (omaggio)':'';var base=b.replace(/\s*\(omaggio\)$/i,'').toLowerCase();
+  var x=lista.find(function(z){return z.toLowerCase()===l||z.toLowerCase()===base;});return x?(x.toLowerCase()===l?x:x+om):b;}
+function referenteDa(p,rubrica,vecchio){
+  var n=(p.names||[])[0]||{},riga=(n.displayName||[n.givenName,n.middleName,n.familyName].filter(Boolean).join(' ')).trim();
+  var note=(p.biographies||[]).map(function(b){return b.value||'';}).join('\n'),o=(p.organizations||[])[0]||{};
+  var tel=(p.phoneNumbers||[]).map(function(t){return fmtPhone(t.value);}).filter(function(v,i,a){return v&&a.indexOf(v)===i;});
+  return {nome:(vecchio&&vecchio.nome)||'',telefoni:tel,contatto:riga,resourceName:p.resourceName,rubrica:rubrica,
+    prodotti:righeNota(note,'Prodotti').map(function(v){return canon(v,PRODOTTI);}),sigilli:righeNota(note,'Sigilli').map(function(v){return canon(v,SIGILLI);}),
+    pagamento:righeNota(note,'Pagamento').map(function(v){return canon(v,PAGAMENTI);}),note:altroNota(note),
+    azienda:o.name||'',piva:(o.title||'').replace(/^P\.?\s*IVA\s*/i,''),sdi:(o.department||'').replace(/^SDI\s*/i,'')};
+}
+// scheda del locale ricomposta dai referenti: prodotti/sigilli/pagamento/note uniti; per i referenti "vecchi"
+// (senza i loro prodotti) si tengono quelli che la scheda aveva gia'
+function ricomponi(c,refs,dm){
+  var n={};Object.keys(c).forEach(function(k){if(k!=='_id'&&k!=='_doc')n[k]=c[k];});
+  ['prodotti','sigilli','pagamento','note'].forEach(function(k){
+    var tutti=[];function add(v){if(v&&tutti.indexOf(v)<0)tutti.push(v);}
+    if(refs.some(function(r){return !r[k];}))(c[k]||[]).forEach(add);
+    refs.forEach(function(r){(r[k]||[]).forEach(add);});n[k]=tutti;});
+  n.sigilli=n.sigilli.filter(function(s){return n.sigilli.indexOf(s+' (omaggio)')<0;});
+  ['azienda','piva','sdi'].forEach(function(k){var r=refs.find(function(r){return r[k];});if(r)n[k]=r[k];else if(n[k]==null)n[k]='';});
+  if(dm&&!n.lat){['nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona'].forEach(function(k){if(dm[k]!=null)n[k]=dm[k];});
+    if(!n.locale)n.locale=dm.locale||dm.nomeGoogle;}
+  n.referenti=refs;return n;
+}
+function chiaveScheda(c){var o={};Object.keys(c).sort().forEach(function(k){if(k!=='_id'&&k!=='_doc')o[k]=c[k];});return JSON.stringify(o);}
+function leggiRubrica(){
+  var all=[];
+  function page(tok){return papi('people/me/connections?pageSize=1000&personFields=names,phoneNumbers,biographies,organizations,memberships,clientData'
+    +(tok?'&pageToken='+encodeURIComponent(tok):'')).then(function(r){all=all.concat(r.connections||[]);return r.nextPageToken?page(r.nextPageToken):all;});}
+  return page(null).then(function(cs){return papi('contactGroups?pageSize=1000&groupFields=name,groupType').then(function(g){return [cs,g.contactGroups||[]];});});
+}
+function aggiornaDaRubrica(daTocco){
+  if(SY.running)return;SY.running=true;segnaSync();
+  googleToken().then(leggiRubrica).then(function(r){
+    var contacts=r[0],gid=((r[1]||[]).find(function(g){return g.name==='Clienti Framezzino';})||{}).resourceName;
+    if(!gid)throw new Error('In questa rubrica non c\'è il gruppo "Clienti Framezzino": hai scelto l\'account Google giusto?');
+    // di chi e' questa rubrica: dei referenti gia' sulla mappa (Jacopo / Marco), altrimenti dell'utente dell'app
+    var rns={},conta={};contacts.forEach(function(p){rns[p.resourceName]=1;});
+    S.clients.forEach(function(s){(s.referenti||[]).forEach(function(x){if(rns[x.resourceName]&&x.rubrica)conta[x.rubrica]=(conta[x.rubrica]||0)+1;});});
+    var rubrica=Object.keys(conta).sort(function(a,b){return conta[b]-conta[a];})[0]||(S.user&&S.user.email)||'rubrica';
+    SY.rubrica=rubrica;
+    var miei={},decidere=[],senza=0;
+    contacts.forEach(function(p){
+      var nm=(((p.names||[])[0]||{}).displayName)||'',dd=cdato(p,'framezzino_decidere');
+      if(dd)decidere.push({nome:nm,motivo:dd.motivo||'',data:dd.data||'',rn:p.resourceName});
+      var inGr=(p.memberships||[]).some(function(m){return m.contactGroupMembership&&m.contactGroupMembership.contactGroupResourceName===gid;});
+      if(!inGr)return;
+      var dm=cdato(p,'framezzino');
+      if(!dm||dm.senzaMappa||!dm.placeId){senza++;return;}
+      (miei[dm.placeId]=miei[dm.placeId]||{dm:dm,refs:[]}).refs.push(p);
+    });
+    var scrivi=[],togli=[];
+    S.clients.forEach(function(c){
+      var pid=c.placeId||c.id,vecchi={};(c.referenti||[]).forEach(function(x){vecchi[x.resourceName]=x;});
+      var m=miei[pid],nuoviRn={};(m?m.refs:[]).forEach(function(p){nuoviRn[p.resourceName]=1;});
+      var altri=(c.referenti||[]).filter(function(x){return x.rubrica!==rubrica&&!nuoviRn[x.resourceName];});
+      var refs=altri.concat((m?m.refs:[]).map(function(p){return referenteDa(p,rubrica,vecchi[p.resourceName]);}));
+      delete miei[pid];
+      if(!refs.length){togli.push(c);return;}
+      var n=ricomponi(c,refs,null);
+      if(chiaveScheda(n)!==chiaveScheda(c))scrivi.push({doc:c._id,c:n});
+    });
+    Object.keys(miei).forEach(function(pid){var m=miei[pid],dm=m.dm;
+      var n=ricomponi({id:pid,placeId:pid,locale:dm.locale||dm.nomeGoogle||'',zona:dm.zona||'Fuori zona'},m.refs.map(function(p){return referenteDa(p,rubrica,null);}),dm);
+      scrivi.push({doc:docId(pid),c:n});});
+    SY.decidere=decidere;SY.senza=senza;SY.quando=new Date();
+    // freni di sicurezza: se qualcosa non torna non si tocca la mappa
+    var conCampo=contacts.filter(function(p){return cdato(p,'framezzino');}).length,mie=S.clients.filter(function(c){return (c.referenti||[]).some(function(x){return x.rubrica===rubrica;});}).length;
+    if(!conCampo)throw new Error('In questa rubrica nessun cliente ha ancora i dati per la mappa: la mappa non è stata toccata. (Avvisa Claude)');
+    if(togli.length>Math.max(10,mie*0.05))throw new Error('Aggiornando dalla rubrica verrebbero tolti '+togli.length+' locali dalla mappa: troppi, mi fermo e non tocco niente. (Avvisa Claude)');
+    if(!scrivi.length&&!togli.length)return [0,0];
+    if(/[?&]prova\b/.test(location.search)){  // prova: calcola e mostra, non scrive niente
+      window.FN_PROVA={rubrica:rubrica,scrivi:scrivi,togli:togli,decidere:decidere,senza:senza};
+      toast('PROVA: '+scrivi.length+' locali da aggiornare, '+togli.length+' da togliere · niente scritto');return [0,0];}
+    return Promise.all(scrivi.map(function(x){return enc(x.c).then(function(d){return {ref:CCOL.doc(x.doc),d:d};});})).then(function(rows){
+      var ops=rows.map(function(x){return {set:x};}).concat(togli.map(function(c){return {del:CCOL.doc(c._id)};}));
+      var now=new Date().toISOString(),chunks=[];for(var i=0;i<ops.length;i+=400)chunks.push(ops.slice(i,i+400));
+      return chunks.reduce(function(pr,ch){return pr.then(function(){var b=db.batch();
+        ch.forEach(function(o){if(o.set)b.set(o.set.ref,{d:o.set.d,v:1,aggiornato:now,da:S.user.email});else b.delete(o.del);});return b.commit();});},Promise.resolve())
+        .then(function(){return [scrivi.length,togli.length];});
+    });
+  }).then(function(n){
+    try{localStorage.setItem('fn_sync_'+(SY.rubrica||''),String(Date.now()));}catch(e){}
+    SY.running=false;segnaSync();
+    if(daTocco||n[0]||n[1])toast('Mappa aggiornata dalla rubrica ✓'+(n[0]?' · '+n[0]+' locali aggiornati':'')+(n[1]?' · '+n[1]+' tolti':'')+(!n[0]&&!n[1]?' · niente da cambiare':''));
+    if(SY.decidere.length&&!daTocco)toast(SY.decidere.length+(SY.decidere.length===1?' contatto da decidere':' contatti da decidere')+': tocca 🔄');
+  }).catch(function(e){SY.running=false;segnaSync();if(daTocco||!/Accesso Google non ancora/.test(e.message))toast(e.message,true);});
+}
+function segnaSync(){var d=document.getElementById('sydot'),b=document.getElementById('sybtn');if(!d)return;
+  d.classList.toggle('on',!!SY.decidere.length||!SY.quando);d.style.background=SY.decidere.length?'var(--red)':'var(--orange)';
+  b.classList.toggle('spin',SY.running);}
+function openSync(){
+  var lista=SY.decidere.map(function(x){return el('div',{cls:'ref'},[el('div',{cls:'refn',text:x.nome||'(senza nome)'}),el('div',{cls:'refc',text:x.motivo+(x.data?' · '+x.data:'')}),
+    el('div',{cls:'acts'},[el('a',{cls:'act',href:'https://contacts.google.com/person/'+x.rn.split('/').pop(),target:'_blank',rel:'noopener',text:'✏️ Apri in Google Contatti'})])]);});
+  var btn=el('button',{cls:'sbtn',style:'background:var(--orange);color:#fff;width:100%',text:SY.running?'Aggiornamento in corso…':'🔄 Aggiorna la mappa dalla mia rubrica',
+    onclick:function(){closeOv();aggiornaDaRubrica(true);}});
+  openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Rubrica e mappa'}),
+      el('div',{cls:'msub',text:SY.quando?('Ultimo aggiornamento: '+SY.quando.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})+(SY.rubrica?' · rubrica di '+SY.rubrica:'')):'Non ancora aggiornata in questa sessione'})]),
+      el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
+    el('div',{cls:'mbody'},[btn,
+      el('div',{cls:'sec',style:'margin-top:16px',text:'Da decidere'+(SY.decidere.length?' ('+SY.decidere.length+')':'')}),
+      SY.quando?(lista.length?el('div',{},lista):el('div',{cls:'msub',text:'Niente da decidere ✓'})):el('div',{cls:'msub',text:'Aggiorna dalla rubrica per vedere i contatti da decidere.'}),
+      lista.length?el('p',{cls:'msub',style:'margin-top:10px',text:'Sono clienti che lo script non ha saputo sistemare da solo (locale non trovato su Google, nome troppo corto, possibile doppione…). Correggi il contatto in rubrica: al prossimo giro lo script lo riprova.'}):null,
+      SY.senza?el('p',{cls:'msub',style:'margin-top:10px',text:SY.senza+' clienti della rubrica sono senza locale sulla mappa (indirizzo sconosciuto o spedizioni).'}):null])]);
+}
+document.getElementById('sybtn').addEventListener('click',openSync);
 
 // ── MENU ──────────────────────────────────────────────────────────────────
 document.getElementById('mbtn').addEventListener('click',function(){
