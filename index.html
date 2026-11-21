@@ -679,17 +679,25 @@ function referenteDa(p,rubrica,vecchio){
 }
 // scheda del locale ricomposta dai referenti: prodotti/sigilli/pagamento/note uniti; per i referenti "vecchi"
 // (senza i loro prodotti) si tengono quelli che la scheda aveva gia'
+// L'ordine resta quello che la scheda aveva gia' (referenti, prodotti, note...): i nuovi vanno in fondo. Prima (fino al
+// 21/11) l'ordine dipendeva da quale rubrica si aggiornava per ultima, e ogni 🔄 alternato Jacopo/Marco riscriveva
+// ~100 locali in comune senza cambiare niente ("96 locali aggiornati").
+function nelVecchioOrdine(nuovi,vecchi,chiave){chiave=chiave||function(x){return x;};
+  var pos={};(vecchi||[]).forEach(function(x,i){var k=chiave(x);if(!(k in pos))pos[k]=i;});
+  return nuovi.map(function(x,i){var k=chiave(x);return {x:x,o:(k in pos)?pos[k]:1e6+i};}).sort(function(a,b){return a.o-b.o;}).map(function(z){return z.x;});}
 function ricomponi(c,refs,dm){
   var n={};Object.keys(c).forEach(function(k){if(k!=='_id'&&k!=='_doc')n[k]=c[k];});
+  refs=nelVecchioOrdine(refs,c.referenti,function(r){return r.resourceName;});
   ['prodotti','sigilli','pagamento','note'].forEach(function(k){
     var tutti=[];function add(v){if(v&&tutti.indexOf(v)<0)tutti.push(v);}
     if(refs.some(function(r){return !r[k];}))(c[k]||[]).forEach(add);
-    refs.forEach(function(r){(r[k]||[]).forEach(add);});n[k]=tutti;});
+    refs.forEach(function(r){(r[k]||[]).forEach(add);});n[k]=nelVecchioOrdine(tutti,c[k]);});
   n.sigilli=n.sigilli.filter(function(s){return n.sigilli.indexOf(s+' (omaggio)')<0;});
   // "sì" (sigilli senza tipo) e' un doppione se il tipo c'e' gia' ("Personalizzati" + "sì")
   var tipi=n.sigilli.filter(function(s){return !/^s[iì](\s|$)/i.test(s);});
   if(tipi.length)n.sigilli=tipi;
-  ['azienda','piva','sdi'].forEach(function(k){var r=refs.find(function(r){return r[k];});if(r)n[k]=r[k];else if(n[k]==null)n[k]='';});
+  // se due referenti hanno valori diversi resta quello che la scheda aveva gia' (se uno dei referenti ce l'ha ancora)
+  ['azienda','piva','sdi'].forEach(function(k){var r=refs.find(function(r){return r[k]&&r[k]===c[k];})||refs.find(function(r){return r[k];});if(r)n[k]=r[k];else if(n[k]==null)n[k]='';});
   if(dm&&!n.lat){['nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona'].forEach(function(k){if(dm[k]!=null)n[k]=dm[k];});
     if(!n.locale)n.locale=dm.locale||dm.nomeGoogle;}
   n.referenti=refs;return n;
