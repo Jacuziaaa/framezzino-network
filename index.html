@@ -898,7 +898,7 @@ function gruppiZona(p,zona,gs){
   var perNome={},perId={};gs.forEach(function(g){perNome[g.name]=g.resourceName;perId[g.resourceName]=g.name;});
   var ha=(p.memberships||[]).map(function(m){return m.contactGroupMembership&&m.contactGroupMembership.contactGroupResourceName;}).filter(Boolean);
   var voglio=['Clienti Framezzino'].concat(zona?['Clienti Framezzino '+zona]:[]);
-  var via=ha.filter(function(id){var n=perId[id]||'';return n.indexOf('Clienti Framezzino ')===0&&voglio.indexOf(n)<0;});
+  var via=ha.filter(function(id){var n=perId[id]||'';return (n.indexOf('Clienti Framezzino ')===0&&voglio.indexOf(n)<0)||n==='Personali';});  // un cliente esce da Personali
   return voglio.reduce(function(pr,n){return pr.then(function(){
     if(perNome[n]&&ha.indexOf(perNome[n])>=0)return;
     return (perNome[n]?Promise.resolve(perNome[n]):papi('contactGroups','POST',{contactGroup:{name:n}}).then(function(g){gs.push({name:n,resourceName:g.resourceName,groupType:'USER_CONTACT_GROUP'});perNome[n]=g.resourceName;return g.resourceName;}))
