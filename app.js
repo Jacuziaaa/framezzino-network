@@ -113,7 +113,7 @@ function startApp(){
       document.getElementById('empty').style.display=S.clients.length?'none':'block';
       // prima lettura: se l'accesso Google e' ancora valido la mappa si aggiorna subito dalla rubrica
       S.daCache=snap.metadata.fromCache;
-      if(!S.syncAvviato){segnaSync();if(!S.daCache){S.syncAvviato=true;controllaCloud(true);if(gTok&&gTok.exp>Date.now()+60000)aggiornaDaRubrica(false);}}
+      if(!S.syncAvviato){segnaSync();if(!S.daCache){S.syncAvviato=true;controllaCloud(true);apriDaLink();if(gTok&&gTok.exp>Date.now()+60000)aggiornaDaRubrica(false);}}
       if(S.daCache&&!navigator.onLine&&!S.avvisoRete){S.avvisoRete=true;toast('Senza rete: vedi i clienti salvati sul telefono (la mappa può restare senza sfondo).');}});
   },function(e){toast(permMsg(e),true);});
 }
@@ -1141,6 +1141,12 @@ function boxCloud(){var box=el('div',{style:'margin-top:10px'});
     box.appendChild(el('div',{style:'border:1px solid var(--red);border-radius:10px;padding:10px;background:#fff5f5'},righe));}
   disegna(SY.cloud);statoCloud().then(function(c){if(c){SY.cloud=c;segnaSync();}disegna(c);});
   return box;}
+// link da DeliverySync (22/11): #cliente=<scheda> apre la scheda (per correggerla), #nuovo apre "+ Nuovo"
+function apriDaLink(){var h=location.hash||'';if(!h||!S.clients.length)return;var m=/^#cliente=(.+)$/.exec(h);
+  try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}
+  if(m){var id=decodeURIComponent(m[1]);if(S.clients.some(function(c){return c._id===id;}))openDetail(id,true);else toast('Cliente non trovato sulla mappa',true);}
+  else if(h==='#nuovo')openNewClient();}
+window.addEventListener('hashchange',apriDaLink);
 document.getElementById('sybtn').addEventListener('click',openSync);
 
 // ── MENU ──────────────────────────────────────────────────────────────────
