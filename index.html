@@ -685,14 +685,21 @@ function rubricaMia(){return SY.rubrica;}
 // nomi dei prodotti/sigilli/pagamenti come nei filtri, a prescindere da maiuscole ("Maxi Tostone" = "Maxi tostone")
 function canon(v,lista){var b=(v||'').trim(),l=b.toLowerCase(),om=/\s*\(omaggio\)$/i.test(b)?' (omaggio)':'';var base=b.replace(/\s*\(omaggio\)$/i,'').toLowerCase();
   var x=lista.find(function(z){return z.toLowerCase()===l||z.toLowerCase()===base;});return x?(x.toLowerCase()===l?x:x+om):b;}
+// RUBRICA UNICA (22/11): ogni cliente c'e' in tutte e due le rubriche; le due copie hanno lo stesso campo nascosto
+// "framezzino_id" {id, jacopo: resourceName, marco: resourceName}. Sulla mappa il referente e' UNO: si riconosce
+// dall'id e dai resourceName delle due copie (campo "copie" del referente).
+function copieDi(p){var f=cdato(p,'framezzino_id'),o=[p.resourceName];if(f){if(f.jacopo)o.push(f.jacopo);if(f.marco)o.push(f.marco);}return o;}
+function rnsRef(r){var o=[r.resourceName];if(r.copie)Object.keys(r.copie).forEach(function(k){o.push(r.copie[k]);});return o.filter(function(x,i){return x&&o.indexOf(x)===i;});}
 function referenteDa(p,rubrica,vecchio){
   var n=(p.names||[])[0]||{},riga=(n.displayName||[n.givenName,n.middleName,n.familyName].filter(Boolean).join(' ')).trim();
   var note=(p.biographies||[]).map(function(b){return b.value||'';}).join('\n'),o=(p.organizations||[])[0]||{};
   var tel=(p.phoneNumbers||[]).map(function(t){return fmtPhone(t.value);}).filter(function(v,i,a){return v&&a.indexOf(v)===i;});
-  return {nome:(vecchio&&vecchio.nome)||'',telefoni:tel,contatto:riga,resourceName:p.resourceName,rubrica:rubrica,
+  var r={nome:(vecchio&&vecchio.nome)||'',telefoni:tel,contatto:riga,resourceName:(vecchio&&vecchio.resourceName)||p.resourceName,rubrica:(vecchio&&vecchio.rubrica)||rubrica,
     prodotti:righeNota(note,'Prodotti').map(function(v){return canon(v,PRODOTTI);}),sigilli:righeNota(note,'Sigilli').map(function(v){return canon(v,SIGILLI);}),
     pagamento:righeNota(note,'Pagamento').map(function(v){return canon(v,PAGAMENTI);}),note:altroNota(note),
     azienda:o.name||'',piva:(o.title||'').replace(/^P\.?\s*IVA\s*/i,''),sdi:(o.department||'').replace(/^SDI\s*/i,'')};
+  var f=cdato(p,'framezzino_id');if(f&&f.id){r.id=f.id;r.copie={};if(f.jacopo)r.copie.jacopo=f.jacopo;if(f.marco)r.copie.marco=f.marco;}
+  return r;
 }
 // scheda del locale ricomposta dai referenti: prodotti/sigilli/pagamento/note uniti; per i referenti "vecchi"
 // (senza i loro prodotti) si tengono quelli che la scheda aveva gia'
@@ -743,6 +750,7 @@ function aggiornaDaRubrica(daTocco){
     var rubrica=Object.keys(conta).sort(function(a,b){return conta[b]-conta[a];})[0]||(S.user&&S.user.email)||'rubrica';
     SY.rubrica=rubrica;
     var exDi={};S.clients.forEach(function(c){(c.ex||[]).forEach(function(o){exDi[o]=c;});});
+    var mio={};contacts.forEach(function(p){copieDi(p).forEach(function(x){mio[x]=p;});});  // rn (mio o della copia gemella) -> mio contatto
     var miei={},decidere=[],senza=0;
     contacts.forEach(function(p){
       var nm=(((p.names||[])[0]||{}).displayName)||'',dd=cdato(p,'framezzino_decidere');
@@ -762,10 +770,12 @@ function aggiornaDaRubrica(daTocco){
         var nd=Object.assign({},d);LOC.forEach(function(k){if(n[k]!=null)nd[k]=n[k];});nd.placeId=pid;nd.agg=n.agg;
         allinea.push({p:p,dm:nd,zona:n.zona});}});}
     S.clients.forEach(function(c){
-      var pid=c.placeId||c.id,vecchi={};(c.referenti||[]).forEach(function(x){vecchi[x.resourceName]=x;});
-      var m=miei[pid],nuoviRn={};(m?m.refs:[]).forEach(function(p){nuoviRn[p.resourceName]=1;});
-      var altri=(c.referenti||[]).filter(function(x){return x.rubrica!==rubrica&&!nuoviRn[x.resourceName];});
-      var refs=altri.concat((m?m.refs:[]).map(function(p){return referenteDa(p,rubrica,vecchi[p.resourceName]);}));
+      var pid=c.placeId||c.id,vecchi={};(c.referenti||[]).forEach(function(x){rnsRef(x).forEach(function(k){if(!vecchi[k])vecchi[k]=x;});});
+      var m=miei[pid],nuoviRn={};(m?m.refs:[]).forEach(function(p){copieDi(p).forEach(function(k){nuoviRn[k]=1;});});
+      // referenti dell'altra rubrica ancora da tenere: non sono miei (ne' la mia copia), e non cancellati dalla mia rubrica
+      var altri=(c.referenti||[]).filter(function(x){return x.rubrica!==rubrica&&!rnsRef(x).some(function(k){return nuoviRn[k]||mio[k];})
+        &&!(x.copie&&x.copie[rubrica]&&!rns[x.copie[rubrica]]);});
+      var refs=altri.concat((m?m.refs:[]).map(function(p){var v=null;copieDi(p).some(function(k){v=vecchi[k];return !!v;});return referenteDa(p,rubrica,v);}));
       delete miei[pid];
       if(!refs.length){togli.push(c);return;}
       var n=ricomponi(c,refs,null);
@@ -955,13 +965,14 @@ function scatolaLocale(pl,nota){return el('div',{cls:'placebox'},[el('b',{text:p
 function openModifica(c){
   attesaOv('Modifica · '+c.locale);
   googleToken().then(function(){
-    return Promise.all([Promise.all((c.referenti||[]).filter(function(r){return r.resourceName;}).map(function(r){
-      return papi(r.resourceName+'?personFields='+PF).catch(function(){return null;});})),gruppiLista()]);
-  }).then(function(z){formModifica(c,z[0].filter(Boolean),z[1]);}).catch(function(e){closeOv();toast(e.message,true);});
+    var tutti=[];(c.referenti||[]).forEach(function(r){rnsRef(r).forEach(function(k){if(tutti.indexOf(k)<0)tutti.push(k);});});
+    return Promise.all([Promise.all(tutti.map(function(k){return papi(k+'?personFields='+PF).catch(function(){return null;});})),gruppiLista()]);
+  }).then(function(z){var visti={};formModifica(c,z[0].filter(function(p){if(!p||visti[p.resourceName])return false;visti[p.resourceName]=1;return true;}),z[1]);})
+    .catch(function(e){closeOv();toast(e.message,true);});
 }
 function formModifica(c,miei,gs){
   var mieiRn={};miei.forEach(function(p){mieiRn[p.resourceName]=p;});
-  var altri=(c.referenti||[]).filter(function(r){return !mieiRn[r.resourceName];});
+  var altri=(c.referenti||[]).filter(function(r){return !rnsRef(r).some(function(k){return mieiRn[k];});});
   var v={prod:{},sig:{},pag:{},omaggio:false},altro=[],org={az:'',piva:'',sdi:''};
   miei.forEach(function(p){var n=notaDi(p);
     tutteRighe(n,'Prodotti').forEach(function(x){v.prod[canon(x,PRODOTTI)]=1;});
@@ -1024,7 +1035,7 @@ function formModifica(c,miei,gs){
       var passo=campi.length?contattoAggiorna(p,body,campi.join(',')):Promise.resolve(p);
       return passo.then(function(np){return (cambiaZona?gruppiZona(np,zona,gs):Promise.resolve()).then(function(){fatti[np.resourceName]=np;return fatti;});});
     });},Promise.resolve({})).then(function(fatti){
-      var refs=(c.referenti||[]).map(function(r){var np=fatti[r.resourceName];return np?referenteDa(np,r.rubrica||rubricaMia()||'',r):r;});
+      var refs=(c.referenti||[]).map(function(r){var np=null;rnsRef(r).some(function(k){np=fatti[k];return !!np;});return np?referenteDa(np,r.rubrica||rubricaMia()||'',r):r;});
       var n=ricomponi(c,refs,null),dest=c._id;n.locale=locale;n.zona=zona;
       if(dmNuovo){LOC.forEach(function(k){if(k!=='zona')n[k]=dmNuovo[k];});n.id=dmNuovo.placeId;n.maps=pl.googleMapsURI||dmNuovo.maps;}
       if(cambiaLoc||cambiaZona)n.agg=ora;
