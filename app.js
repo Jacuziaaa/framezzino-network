@@ -298,7 +298,7 @@ document.getElementById('stbtn').addEventListener('click',function(){
 // ── NUOVO CLIENTE: locale da Google Maps → contatto in rubrica Google + scheda cifrata sulla mappa ──
 // Stesso formato degli script del PC: Nome "Tram Comune Locale", Cognome referente, P.IVA in Qualifica,
 // SDI in Reparto, indirizzo di lavoro, link Maps, note a righe fisse, gruppi "Clienti Framezzino" + zona.
-var PRODOTTI=['S','M','L','Magnum','XXL','Rettangolari','Panini','Toast','Tostone','Maxi tostone','Galaxy','Club','Veline','Sacchetti'];
+var PRODOTTI=['S','M','L','Magnum','XXL','Rettangolari','Panini','Toast','Tostoni','Maxi tostoni','Galaxy','Club','Veline','Sacchetti'];
 var SIGILLI=['Personalizzati','Colorati','Smile','Produzione propria'];
 var PAGAMENTI=['Bonifico','Contrassegno','PayPal','Spedizione'];
 var PEOPLE='https://people.googleapis.com/v1/', gTok=null, gClient=null;
@@ -473,8 +473,10 @@ function cdato(p,k){var x=(p.clientData||[]).find(function(c){return c.key===k;}
 function righeNota(note,k){var m=(note||'').match(new RegExp('^'+k+':[ \\t]*(.+)$','m'));return m?m[1].split(',').map(function(x){return x.trim();}).filter(Boolean):[];}
 function altroNota(note){var m=(note||'').match(/^Altro:[ \t]*([\s\S]+)$/m);return m&&m[1].trim()?[m[1].trim()]:[];}
 function rubricaMia(){return SY.rubrica;}
-// nomi dei prodotti/sigilli/pagamenti come nei filtri, a prescindere da maiuscole ("Maxi Tostone" = "Maxi tostone")
-function canon(v,lista){var b=(v||'').trim(),l=b.toLowerCase(),om=/\s*\(omaggio\)$/i.test(b)?' (omaggio)':'';var base=b.replace(/\s*\(omaggio\)$/i,'').toLowerCase();
+// nomi dei prodotti/sigilli/pagamenti come nei filtri, a prescindere da maiuscole ("Maxi Tostoni" = "Maxi tostoni");
+// i nomi vecchi al singolare diventano plurali (Jacopo 22/11: "Tostone" -> "Tostoni", "Maxi tostone" -> "Maxi tostoni")
+var ALIAS_PROD={'tostone':'Tostoni','maxi tostone':'Maxi tostoni','maxi tst':'Maxi tostoni','maxi tst.':'Maxi tostoni'};
+function canon(v,lista){if(lista===PRODOTTI&&ALIAS_PROD[(v||'').trim().toLowerCase()])return ALIAS_PROD[(v||'').trim().toLowerCase()];var b=(v||'').trim(),l=b.toLowerCase(),om=/\s*\(omaggio\)$/i.test(b)?' (omaggio)':'';var base=b.replace(/\s*\(omaggio\)$/i,'').toLowerCase();
   var x=lista.find(function(z){return z.toLowerCase()===l||z.toLowerCase()===base;});return x?(x.toLowerCase()===l?x:x+om):b;}
 // RUBRICA UNICA (22/11): ogni cliente c'e' in tutte e due le rubriche; le due copie hanno lo stesso campo nascosto
 // "framezzino_id" {id, jacopo: resourceName, marco: resourceName}. Sulla mappa il referente e' UNO: si riconosce
@@ -663,9 +665,14 @@ function openGhKey(){
     el('div',{cls:'mbody'},[el('p',{cls:'msub',style:'margin-top:0',text:'Incolla la chiave creata su GitHub (solo permesso "Actions" sul repository framezzino-sync). Viene salvata cifrata con la password della mappa: vale anche sul telefono di Marco.'}),inp,err,b])]);
 }
 function openSync(){
-  var lista=SY.decidere.map(function(x){return el('div',{cls:'ref'},[el('div',{cls:'refn',text:x.nome||'(senza nome)'}),el('div',{cls:'refc',text:x.motivo+(x.data?' · '+x.data:'')}),
-    el('div',{cls:'acts'},[el('button',{cls:'act main',type:'button',text:/^zona da decidere/.test(x.motivo||'')?'🗺️ Scegli la zona':'📍 Sistema qui',onclick:function(){openRisolvi(x);}}),
-      el('a',{cls:'act',href:'https://contacts.google.com/person/'+x.rn.split('/').pop(),target:'_blank',rel:'noopener',text:'✏️ Apri in Google Contatti'})])]);});
+  var lista=SY.decidere.map(function(x){var m=x.motivo||'',azioni;
+    if(/^possibile doppione/.test(m))azioni=[el('button',{cls:'act main',type:'button',text:'🗑️ È un doppione: elimina',onclick:function(){eliminaDoppione(x);}}),
+      el('button',{cls:'act',type:'button',text:'✓ Sono diversi',onclick:function(){togliDecidere(x,'Tenuti tutti e due ✓');}})];
+    else if(/^zona da decidere/.test(m))azioni=[el('button',{cls:'act main',type:'button',text:'🗺️ Scegli la zona',onclick:function(){openRisolvi(x);}})];
+    else if(/^(ricreato in rubrica|modificato da Jacopo e da Marco)/.test(m))azioni=[el('button',{cls:'act main',type:'button',text:'✓ Va bene così',onclick:function(){togliDecidere(x,'Fatto ✓');}})];
+    else azioni=[el('button',{cls:'act main',type:'button',text:'📍 Sistema qui',onclick:function(){openRisolvi(x);}})];
+    azioni.push(el('a',{cls:'act',href:'https://contacts.google.com/person/'+x.rn.split('/').pop(),target:'_blank',rel:'noopener',text:'✏️ Apri in Google Contatti'}));
+    return el('div',{cls:'ref'},[el('div',{cls:'refn',text:x.nome||'(senza nome)'}),el('div',{cls:'refc',text:m+(x.data?' · '+x.data:'')}),el('div',{cls:'acts'},azioni)]);});
   var btn=el('button',{cls:'sbtn',style:'background:var(--orange);color:#fff;width:100%',
     text:SY.running?(SY.fase==='script'?'Sistemo la rubrica nel cloud…':'Aggiornamento in corso…'):'🔄 Sistema la rubrica e aggiorna la mappa',
     onclick:function(){closeOv();sistemaEAggiorna();}});
@@ -677,7 +684,7 @@ function openSync(){
     el('div',{cls:'mbody'},[btn,chiave,
       el('div',{cls:'sec',style:'margin-top:16px',text:'Da decidere'+(SY.decidere.length?' ('+SY.decidere.length+')':'')}),
       SY.quando?(lista.length?el('div',{},lista):el('div',{cls:'msub',text:'Niente da decidere ✓'})):el('div',{cls:'msub',text:'Aggiorna dalla rubrica per vedere i contatti da decidere.'}),
-      lista.length?el('p',{cls:'msub',style:'margin-top:10px',text:'Sono clienti che lo script non ha saputo sistemare da solo (locale non trovato su Google, possibile doppione, zona da scegliere…). Con "📍 Sistema qui" scegli il locale (o "senza locale") e la zona: va in rubrica e sulla mappa. Oppure correggi il contatto in Google Contatti: al prossimo giro lo script lo riprova.'}):null,
+      lista.length?el('p',{cls:'msub',style:'margin-top:10px',text:'Sono clienti che lo script non ha saputo sistemare da solo (locale non trovato su Google, possibile doppione, zona da scegliere…). Con "📍 Sistema qui" scegli il locale (o "senza locale") e la zona: va in rubrica e sulla mappa. Possibile doppione: "elimina" se è lo stesso cliente, "sono diversi" se sono due clienti diversi. Oppure correggi il contatto in Google Contatti: al prossimo giro lo script lo riprova. Questi avvisi li vedete tutti e due.'}):null,
       SY.senza?el('p',{cls:'msub',style:'margin-top:10px',text:SY.senza+' clienti della rubrica sono senza locale sulla mappa (indirizzo sconosciuto o spedizioni).'}):null])]);
 }
 // ── MODIFICHE DALL'APP (21/11): scheda del locale e "Da decidere" → rubrica Google di chi usa l'app + mappa ──────
@@ -922,6 +929,24 @@ function formRisolvi(x,p,gs){
     el('div',{cls:'flbl',text:'Locale su Google Maps *'}),cerca,box,
     el('div',{cls:'flbl',text:'Nome del locale (come vuoi vederlo sulla mappa)'}),fLocale,
     el('div',{cls:'flbl',text:'Zona'}),zsel,err,b,bSenza,el('div',{cls:'acts',style:'margin-top:10px'},[link])])]);
+}
+// "Da decidere" risolto senza cambiare il contatto (doppione tenuto, copia ricreata giusta...): si toglie solo il motivo;
+// al prossimo giro del cloud si toglie anche dalla copia nell'altra rubrica
+function togliDecidere(x,msg){
+  closeOv();attesaOv(x.nome||'Da decidere');
+  googleToken().then(function(){return papi(x.rn+'?personFields='+PF);})
+    .then(function(p){return contattoAggiorna(p,{clientData:conDati(p,cdato(p,'framezzino'),null)},'clientData');})
+    .then(function(){closeOv();toast(msg+' · aggiorno la mappa');SY.decidere=SY.decidere.filter(function(d){return d.rn!==x.rn;});segnaSync();setTimeout(function(){aggiornaDaRubrica(true);},600);})
+    .catch(function(e){closeOv();toast(e.message,true);});
+}
+// possibile doppione: il contatto nuovo si elimina (cestino di Google Contatti, 30 giorni); al prossimo giro del cloud
+// sparisce anche la sua copia nell'altra rubrica. Il cliente che c'era gia' resta com'e'.
+function eliminaDoppione(x){
+  if(!window.confirm('Eliminare "'+(x.nome||'questo contatto')+'" dalla tua rubrica?\n\n'+(x.motivo||'')+'\n\nResta il cliente che c\'era già. Se questo contatto ha qualcosa in più (altro numero, note…), aggiungilo prima all\'altro con "Apri in Google Contatti". Va nel cestino di Google Contatti (30 giorni) e sparisce anche dall\'altra rubrica al prossimo giro.'))return;
+  closeOv();attesaOv(x.nome||'Elimino…');
+  googleToken().then(function(){return papi(x.rn+':deleteContact','DELETE');})
+    .then(function(){closeOv();toast('Doppione eliminato ✓ · aggiorno la mappa');SY.decidere=SY.decidere.filter(function(d){return d.rn!==x.rn;});segnaSync();setTimeout(function(){aggiornaDaRubrica(true);},600);})
+    .catch(function(e){closeOv();toast(e.message,true);});
 }
 document.getElementById('sybtn').addEventListener('click',openSync);
 
