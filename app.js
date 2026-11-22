@@ -42,7 +42,9 @@ function el(tag,a,kids){var e=document.createElement(tag);if(a)for(var k in a){v
 function show(id){['login','crypto'].forEach(function(p){document.getElementById(p).classList.toggle('show',p===id);});document.getElementById('app').classList.toggle('show',id==='app');document.getElementById('loader').style.display='none';}
 function norm(s){return (s||'').toString().normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();}
 function telLink(t){return 'tel:'+t.replace(/[^\d+]/g,'');}
-function waLink(t){var d=t.replace(/[^\d]/g,'');if(d.length===10&&d[0]==='3')d='39'+d;return 'https://wa.me/'+d;}
+// WhatsApp: cellulare italiano con o senza +39 / 0039 (anche "392 …", "393 …" scritti senza prefisso); '' se non e' un cellulare
+function waLink(t){var d=(t||'').replace(/\D/g,'');if(d.indexOf('0039')===0)d=d.slice(2);if(/^3\d{8,9}$/.test(d))d='39'+d;
+  return /^393\d{8,9}$/.test(d)?'https://wa.me/'+d:'';}
 function isMobile(t){var d=t.replace(/[^\d]/g,'');return /^(39)?3\d{9}$/.test(d);}
 document.querySelectorAll('[data-eye]').forEach(function(b){b.addEventListener('click',function(){var i=document.getElementById(b.dataset.eye);i.type=i.type==='password'?'text':'password';});});
 
@@ -575,7 +577,7 @@ var LOC=['placeId','nomeGoogle','comune','provincia','indirizzo','lat','lng','ma
 function aggiornaDaRubrica(daTocco){
   if(SY.running)return;
   // con la sola copia del telefono (senza rete o appena aperta) la mappa potrebbe essere vecchia: non si riscrive niente
-  if(S.daCache){if(daTocco)toast('Aspetto di essere collegato a internet per aggiornare la mappa: riprova tra poco.',true);return;}SY.running=true;segnaSync();
+  if(S.daCache||!navigator.onLine){if(daTocco)toast('Aspetto di essere collegato a internet per aggiornare la mappa: riprova tra poco.',true);return;}SY.running=true;segnaSync();
   var gruppi=[];
   googleToken().then(leggiRubrica).then(function(r){
     var contacts=r[0];gruppi=r[1]||[];var gid=(gruppi.find(function(g){return g.name==='Clienti Framezzino';})||{}).resourceName;
@@ -719,6 +721,10 @@ function openSync(){
   var lista=SY.decidere.map(function(x){var m=x.motivo||'',azioni;
     if(/^possibile doppione/.test(m))azioni=[el('button',{cls:'act main',type:'button',text:'🗑️ È un doppione: elimina',onclick:function(){eliminaDoppione(x);}}),
       el('button',{cls:'act',type:'button',text:'✓ Sono diversi',onclick:function(){togliDecidere(x,'Tenuti tutti e due ✓');}})];
+    // doppione visto dallo script dei contatti nuovi: il contatto non e' ancora sistemato, quindi "sono diversi" = sistemalo
+    // (scegli il locale: diventa un referente in piu' di quella scheda); togliere solo l'avviso lo farebbe tornare al giro dopo
+    else if(/^sembra un doppione/.test(m))azioni=[el('button',{cls:'act main',type:'button',text:'🗑️ È un doppione: elimina',onclick:function(){eliminaDoppione(x);}}),
+      el('button',{cls:'act',type:'button',text:'📍 Sono diversi: sistemalo',onclick:function(){openRisolvi(x);}})];
     else if(/^zona da decidere/.test(m))azioni=[el('button',{cls:'act main',type:'button',text:'🗺️ Scegli la zona',onclick:function(){openRisolvi(x);}})];
     else if(/^(ricreato in rubrica|modificato da Jacopo e da Marco)/.test(m))azioni=[el('button',{cls:'act main',type:'button',text:'✓ Va bene così',onclick:function(){togliDecidere(x,'Fatto ✓');}})];
     else azioni=[el('button',{cls:'act main',type:'button',text:'📍 Sistema qui',onclick:function(){openRisolvi(x);}})];
@@ -1050,8 +1056,6 @@ function tornaCliente(x,btn){
     function(e){btn.disabled=false;btn.textContent='↩ Torna cliente';toast(e.message,true);});
 }
 // 📦 clienti della rubrica senza locale sulla mappa (spedizioni, indirizzo sconosciuto): telefono, WhatsApp, "Metti sulla mappa"
-function waLink(t){var d=(t||'').replace(/\D/g,'');if(d.indexOf('0039')===0)d=d.slice(2);if(d.indexOf('39')!==0)d='39'+d;
-  return /^393\d{8,9}$/.test(d)?'https://wa.me/'+d:'';}
 function openSenzaLocale(){
   var l=(SY.senzaLista||[]).slice().sort(function(a,b){return (a.nome||'').localeCompare(b.nome||'');});
   var righe=l.map(function(x){var acts=[];
