@@ -17,14 +17,15 @@ h1{font-size:24px;margin:0 0 4px}h2{font-size:17px;margin:24px 0 4px}p,li{color:
 <body>
 <main>
 <h1>Framezzino Network – Informativa privacy</h1>
-<p>Ultimo aggiornamento: 9 novembre 2026</p>
+<p>Ultimo aggiornamento: 22 novembre 2026</p>
 <h2>Cos'è</h2>
 <p>Framezzino Network è uno strumento interno di Framezzino, usato solo dal titolare e dai collaboratori autorizzati, per vedere su una mappa i clienti dell'azienda e registrare i nuovi clienti.</p>
 <h2>Dati della rubrica Google</h2>
 <ul>
-<li>Con il permesso dell'utente, l'app scrive nella sua rubrica Google i contatti dei nuovi clienti (nome del locale, referente, telefono, indirizzo, note di lavoro) e li assegna ai gruppi dei clienti.</li>
-<li>L'app non legge, non copia e non trasmette altrove i contatti personali della rubrica.</li>
-<li>L'accesso alla rubrica avviene direttamente dal browser dell'utente verso Google; i dati non passano da server di terzi.</li>
+<li>Con il permesso dell'utente, l'app legge la sua rubrica Google per aggiornare la mappa: la lettura avviene nel browser e sulla mappa finiscono solo i contatti dei clienti. I contatti personali vengono letti ma non sono salvati né trasmessi altrove.</li>
+<li>L'app scrive nella rubrica i contatti dei nuovi clienti e le modifiche fatte dall'utente (nome del locale, referente, telefono, indirizzo, note di lavoro) e li assegna ai gruppi dei clienti.</li>
+<li>Il permesso di accesso alla rubrica resta valido solo finché l'app è aperta; alla riapertura viene chiesto di nuovo.</li>
+<li>Uno script interno dell'azienda, eseguito ogni giorno in un servizio cloud privato (GitHub Actions), legge le rubriche dei collaboratori autorizzati per sistemare i contatti dei clienti (gruppi, zone, dati pubblici del locale presi da Google Maps), tenere uguali i clienti nelle rubriche dei collaboratori e segnalare i contatti da controllare. Nel servizio cloud restano solo codici tecnici e dati pubblici dei locali, non i nomi né i numeri dei contatti.</li>
 </ul>
 <h2>Dati dei clienti sulla mappa</h2>
 <p>Le schede dei clienti mostrate sulla mappa sono cifrate sul dispositivo (AES-256) prima di essere salvate nel database dell'azienda: chi non conosce la password di cifratura non può leggerle.</p>
