@@ -113,7 +113,7 @@ function startApp(){
       document.getElementById('empty').style.display=S.clients.length?'none':'block';
       // prima lettura: se l'accesso Google e' ancora valido la mappa si aggiorna subito dalla rubrica
       S.daCache=snap.metadata.fromCache;
-      if(!S.syncAvviato){segnaSync();if(!S.daCache){S.syncAvviato=true;if(gTok&&gTok.exp>Date.now()+60000)aggiornaDaRubrica(false);}}
+      if(!S.syncAvviato){segnaSync();if(!S.daCache){S.syncAvviato=true;controllaCloud(true);if(gTok&&gTok.exp>Date.now()+60000)aggiornaDaRubrica(false);}}
       if(S.daCache&&!navigator.onLine&&!S.avvisoRete){S.avvisoRete=true;toast('Senza rete: vedi i clienti salvati sul telefono (la mappa può restare senza sfondo).');}});
   },function(e){toast(permMsg(e),true);});
 }
@@ -664,7 +664,8 @@ function allineaRubrica(lista,gruppi){var k=0;
 // pallino sul 🔄: numero dei "Da decidere" (rosso; prima del primo 🔄 quello dell'ultima volta), arancione = non ancora aggiornata
 function segnaSync(){var d=document.getElementById('sydot'),b=document.getElementById('sybtn');if(!d)return;
   var n=SY.quando?SY.decidere.length:(parseInt((function(){try{return localStorage.getItem('fn_dd_n');}catch(e){return '';}})(),10)||0);
-  d.classList.toggle('on',!!n||!SY.quando);d.classList.toggle('num',!!n);d.textContent=n?String(n):'';d.style.background=n?'var(--red)':'var(--orange)';
+  var ko=!!(SY.cloud&&SY.cloud.ok===false);
+  d.classList.toggle('on',!!n||ko||!SY.quando);d.classList.toggle('num',!!n||ko);d.textContent=n?String(n):(ko?'!':'');d.style.background=n||ko?'var(--red)':'var(--orange)';
   b.classList.toggle('spin',SY.running);}
 // ── SCRIPT NEL CLOUD (GitHub, repository privato) avviato dal 🔄: sistema la rubrica di chi usa l'app, poi la mappa ──
 // La chiave GitHub (solo "Actions" sul repository framezzino-sync) e' salvata CIFRATA con la password della mappa.
@@ -677,7 +678,7 @@ function ghApi(path,method,body){return fetch('https://api.github.com/repos/'+GH
     headers:{Authorization:'Bearer '+GH.tok,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},body:body?JSON.stringify(body):undefined})
   .then(function(r){if(r.status===204)return {};return r.json().catch(function(){return {};}).then(function(j){
     if(!r.ok)throw new Error(r.status===401||r.status===403||r.status===404?'La chiave GitHub non è valida o è scaduta: incollane una nuova (🔄 → Chiave GitHub).':'GitHub: '+(j.message||r.status));return j;});});}
-function lanciaScript(account){
+function lanciaScript(account,senzaFreno){
   var t0=Date.now()-15000,giri=0;
   function attesa(ms){return new Promise(function(r){setTimeout(r,ms);});}
   function poll(){giri++;return attesa(giri<3?4000:6000).then(function(){return ghApi('/actions/workflows/'+GH.wf+'/runs?event=workflow_dispatch&per_page=5');})
@@ -685,9 +686,12 @@ function lanciaScript(account){
       if(!run){if(giri>12)throw new Error('Lo script nel cloud non è partito: riprova tra poco.');return poll();}
       if(run.status!=='completed'){if(giri>60)throw new Error('Lo script nel cloud ci sta mettendo troppo: la mappa si aggiorna al prossimo 🔄.');return poll();}
       if(run.conclusion==='cancelled')throw new Error('Lo script nel cloud è stato sostituito da un altro giro partito subito dopo (dell\'altro telefono o delle 13): aggiorno lo stesso la mappa, riprova 🔄 tra qualche minuto.');
-      if(run.conclusion!=='success')throw new Error('Lo script nel cloud non è andato a buon fine (GitHub manda un\'email con i dettagli): aggiorno lo stesso la mappa.');
+      if(run.conclusion!=='success')return motiviGiro(run).then(function(m){SY.cloud={ok:false,quando:run.updated_at,motivi:m};segnaSync();
+        throw new Error('Lo script nel cloud si è fermato'+(m.length?': '+m.map(function(x){return x.titolo;}).join(', '):'')+'. Spiegazione e sblocco: 🔄. Aggiorno lo stesso la mappa.');});
+      SY.cloud={ok:true,quando:run.updated_at};segnaSync();
       return run;});}
-  return ghApi('/actions/workflows/'+GH.wf+'/dispatches','POST',{ref:'main',inputs:{account:account}}).then(poll);
+  var inputs={account:account};if(senzaFreno)inputs.senza_freno='true';
+  return ghApi('/actions/workflows/'+GH.wf+'/dispatches','POST',{ref:'main',inputs:inputs}).then(poll);
 }
 // 🔄 dal pannello: accesso Google (finestra dal tocco), script nel cloud per la MIA rubrica, poi mappa dalla rubrica
 function sistemaEAggiorna(){
@@ -728,7 +732,7 @@ function openSync(){
   openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Rubrica e mappa'}),
       el('div',{cls:'msub',text:SY.quando?('Ultimo aggiornamento: '+SY.quando.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})+(SY.rubrica?' · rubrica di '+SY.rubrica:'')):'Non ancora aggiornata in questa sessione'})]),
       el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
-    el('div',{cls:'mbody'},[btn,chiave,
+    el('div',{cls:'mbody'},[btn,chiave,boxCloud(),
       el('div',{cls:'sec',style:'margin-top:16px',text:'Da decidere'+(SY.decidere.length?' ('+SY.decidere.length+')':'')}),
       SY.quando?(lista.length?el('div',{},lista):el('div',{cls:'msub',text:'Niente da decidere ✓'})):el('div',{cls:'msub',text:'Aggiorna dalla rubrica per vedere i contatti da decidere.'}),
       lista.length?el('p',{cls:'msub',style:'margin-top:10px',text:'Sono clienti che lo script non ha saputo sistemare da solo (locale non trovato su Google, possibile doppione, zona da scegliere…). Con "📍 Sistema qui" scegli il locale (o "senza locale") e la zona: va in rubrica e sulla mappa. Possibile doppione: "elimina" se è lo stesso cliente, "sono diversi" se sono due clienti diversi. Oppure correggi il contatto in Google Contatti: al prossimo giro lo script lo riprova. Questi avvisi li vedete tutti e due.'}):null,
@@ -1098,6 +1102,45 @@ function openGuida(){
   openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Come si usa'}),el('div',{cls:'msub',text:'La scheda rapida della guida'})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
     el('div',{cls:'mbody'},corpo)]);
 }
+// ── AVVISI DEL CLOUD (22/11): l'ultimo giro dello script (6:37, 13:23 o dal 🔄) è andato bene? Se no, perché.
+// Il giro nel cloud chiude con passi dal nome chiaro ("FRENO: rubrica di Marco", "ERRORE: allineamento"...): la chiave
+// GitHub (solo Actions) basta per leggerli. Il freno si sblocca da qui dopo la conferma (input "senza_freno").
+var SPIEGA={
+  'FRENO rubrica':'Il freno di sicurezza si è attivato: in un giro solo c\'erano più di 30 contatti nuovi o più di 50 modificati in questa rubrica, e lo script non ha toccato niente. Succede se si salvano o si importano tanti contatti insieme, oppure se un telefono ha riscritto la rubrica.',
+  'FRENO allineamento':'Il freno di sicurezza dell\'allineamento si è attivato: tra le due rubriche c\'erano più di 10 clienti da cancellare, 60 nuovi o 40 modifiche da copiare in un giro solo, e non è stato toccato niente. Se qualcuno ha cancellato tanti clienti per sbaglio, sbloccando le cancellazioni arrivano anche all\'altro (restano 30 giorni nel cestino di Google Contatti).',
+  'ERRORE rubrica':'Lo script si è fermato con un errore. Spesso è l\'accesso Google della rubrica scaduto (va rifatto dal PC con Claude) oppure Google che non rispondeva: riprova con «Sistema la rubrica»; se si ripete, avvisa Claude.',
+  'ERRORE allineamento':'Alcuni clienti non sono stati copiati nell\'altra rubrica (errore di rete o contatto cambiato proprio in quel momento): si riprova da solo al giro dopo. Se si ripete, avvisa Claude.'};
+function motiviGiro(run){return ghApi('/actions/runs/'+run.id+'/jobs').then(function(j){var out=[];
+  ((j.jobs||[])[0]||{steps:[]}).steps.forEach(function(s){var m=/^(FRENO|ERRORE): (.+)$/.exec(s.name||'');if(!m||s.conclusion!=='failure')return;
+    var acc=/Jacopo/.test(m[2])?'jacopo':/Marco/.test(m[2])?'marco':'';
+    out.push({tipo:m[1],titolo:m[1]==='FRENO'?'freno di sicurezza ('+m[2]+')':'errore ('+m[2]+')',account:acc,spiega:SPIEGA[m[1]+' '+(acc?'rubrica':'allineamento')]});});
+  return out;}).catch(function(){return [];});}
+function statoCloud(){return ghToken().then(function(tok){if(!tok)return null;
+  return ghApi('/actions/workflows/'+GH.wf+'/runs?per_page=6').then(function(j){
+    var run=(j.workflow_runs||[]).find(function(x){return x.status==='completed'&&x.conclusion!=='cancelled'&&x.conclusion!=='skipped';});
+    if(!run)return null;if(run.conclusion==='success')return {ok:true,quando:run.updated_at};
+    return motiviGiro(run).then(function(m){return {ok:false,quando:run.updated_at,motivi:m};});});}).catch(function(){return null;});}
+function controllaCloud(avvisa){return statoCloud().then(function(c){if(!c)return;var prima=SY.cloud;SY.cloud=c;segnaSync();
+  if(avvisa&&!c.ok&&!(prima&&prima.ok===false))toast('⚠ Lo script nel cloud si è fermato'+(c.motivi.length?': '+c.motivi.map(function(x){return x.titolo;}).join(', '):'')+'. Tocca 🔄 per sapere cosa fare.',true);});}
+function quandoBreve(iso){var d=new Date(iso);if(isNaN(d))return '';var ieri=new Date(Date.now()-864e5),hm=d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+  return (d.toDateString()===new Date().toDateString()?'oggi':d.toDateString()===ieri.toDateString()?'ieri':d.toLocaleDateString('it-IT',{day:'numeric',month:'short'}))+' alle '+hm;}
+function boxCloud(){var box=el('div',{style:'margin-top:10px'});
+  function disegna(c){box.innerHTML='';if(!c)return;
+    if(c.ok){box.appendChild(el('div',{cls:'msub',text:'Script nel cloud: ultimo giro '+quandoBreve(c.quando)+' ✓'}));return;}
+    var frena=(c.motivi||[]).filter(function(m){return m.tipo==='FRENO';});
+    var righe=[el('div',{style:'font-weight:800;color:var(--red)',text:'⚠ Lo script nel cloud si è fermato ('+quandoBreve(c.quando)+')'})];
+    (c.motivi||[]).forEach(function(m){righe.push(el('div',{style:'margin-top:6px;font-weight:700',text:'• '+m.titolo}));if(m.spiega)righe.push(el('div',{cls:'msub',style:'margin-top:2px',text:m.spiega}));});
+    if(!(c.motivi||[]).length)righe.push(el('div',{cls:'msub',style:'margin-top:4px',text:'Motivo non chiaro: riprova con «Sistema la rubrica»; se si ripete, avvisa Claude.'}));
+    if(frena.length){var acc=frena.every(function(m){return m.account==='jacopo';})?'jacopo':frena.every(function(m){return m.account==='marco';})?'marco':'entrambi';
+      var b=el('button',{cls:'act main',type:'button',style:'margin-top:10px;width:100%;justify-content:center',text:'🔓 Sblocca il freno e rifai il giro',onclick:function(){
+        if(!window.confirm('Sbloccare il freno di sicurezza?\n\nLo script farà TUTTE le modifiche che aveva fermato. Fallo solo se sai perché ci sono tanti contatti nuovi, modificati o cancellati (per esempio li hai appena salvati tu). Se non lo sai, annulla e avvisa Claude.'))return;
+        closeOv();googleToken().then(ghToken).then(function(){SY.running=true;SY.fase='script';segnaSync();toast('Sblocco il freno e rifaccio il giro nel cloud… (circa 1 minuto)');
+          return lanciaScript(acc,true).catch(function(e){toast(e.message,true);});}).then(function(){SY.running=false;SY.fase='';aggiornaDaRubrica(true);},
+          function(e){SY.running=false;SY.fase='';segnaSync();toast(e.message,true);});}});
+      righe.push(b);}
+    box.appendChild(el('div',{style:'border:1px solid var(--red);border-radius:10px;padding:10px;background:#fff5f5'},righe));}
+  disegna(SY.cloud);statoCloud().then(function(c){if(c){SY.cloud=c;segnaSync();}disegna(c);});
+  return box;}
 document.getElementById('sybtn').addEventListener('click',openSync);
 
 // ── MENU ──────────────────────────────────────────────────────────────────
