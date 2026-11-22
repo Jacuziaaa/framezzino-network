@@ -11,6 +11,9 @@ firebase.initializeApp({
   appId:"1:17838948400:web:a02bb794024e44aceeedf5"
 });
 var auth=firebase.auth(), db=firebase.firestore();
+// copia dei dati anche sul telefono (come DeliverySync): clienti e schede visibili senza rete; nella copia locale le schede
+// restano cifrate. Le due app sono sullo stesso sito e condividono questa copia (synchronizeTabs)
+db.enablePersistence({synchronizeTabs:true}).catch(function(){});
 var CCOL=db.collection('network_clienti'), META=db.collection('network_meta').doc('cifratura');
 var SALT='FramezzinoNetwork-AES256-Salt-v1', CHECK='framezzino-network-ok';
 var ZCOL=['#f97316','#0ea5e9','#16a87a','#8b5cf6','#e11d48','#ca8a04','#0d9488','#db2777','#2563eb','#65a30d','#9333ea','#ea580c','#0891b2','#64748b','#b45309','#4f46e5'];
@@ -98,7 +101,7 @@ function startApp(){
   // "aggiornata oggi alle ... · Marco": ultimo 🔄 andato a buon fine, di chiunque (documento network_meta/aggiornamento)
   if(unsubMeta)unsubMeta();unsubMeta=db.collection('network_meta').doc('aggiornamento').onSnapshot(function(d){S.ultimo=d.exists?d.data():null;mostraAggiornata();},function(){});
   if(unsub)unsub();
-  unsub=CCOL.onSnapshot(function(snap){
+  unsub=CCOL.onSnapshot({includeMetadataChanges:true},function(snap){
     var daFinire=[];
     Promise.all(snap.docs.map(function(d){return decD(d.data()).then(function(c){if(c.__dn){delete c.__dn;daFinire.push(d.ref);}c._id=d.id;return c;}).catch(function(){return null;});}))
     .then(function(list){
@@ -109,7 +112,9 @@ function startApp(){
       S.clients=list.filter(Boolean);assignColors();applyFilters();
       document.getElementById('empty').style.display=S.clients.length?'none':'block';
       // prima lettura: se l'accesso Google e' ancora valido la mappa si aggiorna subito dalla rubrica
-      if(!S.syncAvviato){S.syncAvviato=true;segnaSync();if(gTok&&gTok.exp>Date.now()+60000)aggiornaDaRubrica(false);}});
+      S.daCache=snap.metadata.fromCache;
+      if(!S.syncAvviato){segnaSync();if(!S.daCache){S.syncAvviato=true;if(gTok&&gTok.exp>Date.now()+60000)aggiornaDaRubrica(false);}}
+      if(S.daCache&&!navigator.onLine&&!S.avvisoRete){S.avvisoRete=true;toast('Senza rete: vedi i clienti salvati sul telefono (la mappa può restare senza sfondo).');}});
   },function(e){toast(permMsg(e),true);});
 }
 function assignColors(){var zs={};S.clients.forEach(function(c){zs[c.zona]=1;});Object.keys(zs).sort().forEach(function(z,i){zoneColor[z]=z==='Fuori zona'?'#64748b':ZCOL[i%ZCOL.length];});}
@@ -568,7 +573,9 @@ function leggiRubrica(){
 // "ex" nella scheda = locali Google di prima (locale cambiato dall'app): i contatti con il locale vecchio ci finiscono dentro.
 var LOC=['placeId','nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona'];
 function aggiornaDaRubrica(daTocco){
-  if(SY.running)return;SY.running=true;segnaSync();
+  if(SY.running)return;
+  // con la sola copia del telefono (senza rete o appena aperta) la mappa potrebbe essere vecchia: non si riscrive niente
+  if(S.daCache){if(daTocco)toast('Aspetto di essere collegato a internet per aggiornare la mappa: riprova tra poco.',true);return;}SY.running=true;segnaSync();
   var gruppi=[];
   googleToken().then(leggiRubrica).then(function(r){
     var contacts=r[0];gruppi=r[1]||[];var gid=(gruppi.find(function(g){return g.name==='Clienti Framezzino';})||{}).resourceName;
@@ -1057,6 +1064,40 @@ function testoAggiornata(){var u=S.ultimo;if(!u||!u.quando)return '';var d=new D
   return 'aggiornata '+g+' alle '+hm+(u.chi?' · '+u.chi:'');}
 function mostraAggiornata(){var s=document.getElementById('scount');if(!s)return;var x=s.querySelector('.sagg');if(x)x.remove();
   var t=testoAggiornata();if(t)s.appendChild(el('span',{cls:'sagg',text:t}));}
+// ── ❓ COME SI USA: la scheda rapida della guida (niente dati di clienti: questo file e' pubblico) ──
+var GUIDA=[
+  ['Salvare un cliente nuovo',[
+    'Dall\'app (consigliato): ＋ Nuovo → scegli il locale tra i suggerimenti di Google Maps, scrivi telefono e prodotti → Salva. Va in rubrica e sulla mappa, e passa anche all\'altro. Se il numero è già in rubrica l\'app te lo dice.',
+    'Senza locale (spedizioni, ufficio, indirizzo sconosciuto): in ＋ Nuovo tocca «📦 Non ha un locale». Resta cliente, senza pallino sulla mappa.',
+    'Dal telefono: «Salva in» = il tuo account Google (mai «Telefono»). Nome tutto su una riga: Tram + comune + nome del locale + referente, es. «Tram Schio Bar Roma Luca». Cognome vuoto. Indirizzo e gruppi non servono: li mette lo script. Poi 🔄 → «Sistema la rubrica e aggiorna la mappa».',
+    'Senza «Tram» davanti il contatto resta personale: niente mappa, non passa all\'altro, nessun avviso.']],
+  ['Le note: una riga per tipo',[
+    'Prodotti: S, M, L, Magnum, XXL, Rettangolari, Panini, Toast, Tostoni, Maxi tostoni, Galaxy, Club, Veline, Sacchetti',
+    'Sigilli: Personalizzati, Colorati, Smile, Produzione propria. «(omaggio)» solo se sono regalati. Neutri = niente riga.',
+    'Pagamento: Bonifico, Contrassegno, PayPal, Spedizione',
+    'Altro: tutto il resto (prezzi, orari, «ex …», altre persone). Esempio: «Prodotti: L, Maxi tostoni» poi a capo «Sigilli: Personalizzati (omaggio)».',
+    'Mai i prodotti nel nome. «Tostoni» e «Maxi tostoni» sono due prodotti diversi.']],
+  ['Il 🔄 e i «Da decidere»',[
+    'Il 🔄 legge la tua rubrica e aggiorna la mappa. Il numero rosso sul 🔄 = contatti da decidere; il pallino arancione = mappa non ancora aggiornata da quando hai aperto l\'app.',
+    '«Sistema la rubrica e aggiorna la mappa» avvia lo script nel cloud (circa un minuto). Lo script gira anche da solo alle 6:37 e alle 13:23.',
+    'Da decidere: 📍 Sistema qui (scegli il locale, o «Cliente senza locale»), 🗺️ Scegli la zona, possibile doppione → «È un doppione: elimina» oppure «Sono diversi», ✓ Va bene così. Li vedete tutti e due: basta che lo sistemi uno.',
+    'Sotto il numero dei locali c\'è quando è stata aggiornata la mappa l\'ultima volta e da chi.']],
+  ['Modificare, ex clienti, cancellare',[
+    'Scheda del locale → ✏️ Modifica: prodotti, sigilli, pagamento, note, ditta, nome, locale e zona. Va in rubrica e sulla mappa; all\'altro arriva al giro del cloud (o subito con «Sistema la rubrica»).',
+    'Non è più cliente: Modifica → 🚫 Non è più cliente. Non si cancella: resta in rubrica come «Ex Tram …» (etichetta «Ex clienti Framezzino») ed esce dalla mappa. Se torna: 🔄 → Ex clienti → ↩ Torna cliente (oppure togli «Ex » dal nome sul telefono).',
+    'Cancellare davvero: dal telefono. Sparisce anche all\'altro e dalla mappa; resta 30 giorni nel cestino di Google Contatti.',
+    'Clienti senza locale: 🔄 → «📦 … senza locale»: telefono, WhatsApp e «📍 Metti sulla mappa».']],
+  ['Attenzione',[
+    'Mai importare file .vcf sul telefono: sostituisce la rubrica.',
+    'Dopo un aggiornamento dell\'app la novità arriva entro una decina di minuti: chiudi l\'app dalle app recenti e riaprila.',
+    'Su un telefono nuovo serve la password della mappa (quella di cifratura).']]
+];
+function openGuida(){
+  var corpo=[];GUIDA.forEach(function(s){corpo.push(el('div',{cls:'sec',style:'margin-top:14px',text:s[0]}));
+    s[1].forEach(function(r){corpo.push(el('p',{cls:'msub',style:'margin:6px 0;font-size:13px;line-height:1.45;color:var(--text)',text:'• '+r}));});});
+  openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Come si usa'}),el('div',{cls:'msub',text:'La scheda rapida della guida'})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
+    el('div',{cls:'mbody'},corpo)]);
+}
 document.getElementById('sybtn').addEventListener('click',openSync);
 
 // ── MENU ──────────────────────────────────────────────────────────────────
@@ -1064,6 +1105,7 @@ document.getElementById('mbtn').addEventListener('click',function(){
   openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Menu'}),el('div',{cls:'msub',text:'Accesso: '+(S.user?S.user.email:'')})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
     el('div',{cls:'mbody'},[
       el('button',{cls:'act',style:'justify-content:flex-start',text:'📥 Importa / aggiorna clienti da file',onclick:function(){document.getElementById('fileimp').click();}}),
+      el('button',{cls:'act',style:'justify-content:flex-start',text:'❓ Come si usa',onclick:function(){closeOv();openGuida();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🗺️ Mostra tutti sulla mappa',onclick:function(){S.f={zone:{},prod:{},sig:{},pag:{}};S.q='';document.getElementById('search').value='';applyFilters(true);closeOv();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🔑 Cambia password di cifratura',onclick:openRekey}),
       el('button',{cls:'act',style:'justify-content:flex-start;color:var(--red)',text:'↩ Esci',onclick:function(){if(!window.confirm('Vuoi uscire? La chiave di cifratura verrà rimossa da questo dispositivo.'))return;
