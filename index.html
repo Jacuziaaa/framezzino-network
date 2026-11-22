@@ -58,6 +58,8 @@ input,textarea,select{font-family:inherit;color:var(--text)}
 .hb{font-size:18px;color:var(--sub);padding:6px 8px;border-radius:10px;position:relative}
 .hb .dot{position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--orange);display:none}
 .hb .dot.on{display:block}
+.hb .dot.num{width:auto;min-width:16px;height:16px;padding:0 4px;top:0;right:0;border-radius:8px;font-size:10px;font-weight:800;line-height:16px;color:#fff;text-align:center;box-sizing:border-box}
+#scount .sagg{display:block;font-size:10px;font-weight:600;color:var(--muted);margin-top:1px}
 .hb.spin{animation:fnspin 1s linear infinite}@keyframes fnspin{to{transform:rotate(360deg)}}
 #body{flex:1;display:flex;min-height:0;position:relative}
 #map{flex:1;min-width:0}
@@ -218,6 +220,6 @@ input,textarea,select{font-family:inherit;color:var(--text)}
 <div id="ov"><div class="modal" id="modal"></div></div>
 <input type="file" id="fileimp" accept="application/json,.json" style="display:none">
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
