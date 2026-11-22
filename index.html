@@ -401,7 +401,7 @@ function applyFilters(refit){
 function dist(a,b){var R=6371,toR=Math.PI/180,dLa=(b.lat-a.lat)*toR,dLo=(b.lng-a.lng)*toR;var h=Math.sin(dLa/2)**2+Math.cos(a.lat*toR)*Math.cos(b.lat*toR)*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
 function renderList(){
   var L=document.getElementById('list');L.innerHTML='';var arr=S.filtered.slice();
-  if(S.sort==='nome')arr.sort(function(a,b){return a.locale.localeCompare(b.locale);});
+  if(S.sort==='nome')arr.sort(function(a,b){return (a.locale||'').localeCompare(b.locale||'');});
   else if(S.sort==='vicino'&&S.me)arr.sort(function(a,b){return dist(S.me,a)-dist(S.me,b);});
   else arr.sort(function(a,b){return (a.zona+a.comune+a.locale).localeCompare(b.zona+b.comune+b.locale);});
   document.getElementById('scount').textContent=arr.length+(arr.length===1?' locale':' locali')+(arr.length!==S.clients.length?' di '+S.clients.length:'');
@@ -478,7 +478,7 @@ function openDetail(id,pan){
     el('div',{cls:'mbody'},[
       el('div',{},[el('div',{cls:'sec',text:'Indirizzo verificato'}),el('div',{cls:'addr',text:c.indirizzo}),
         el('div',{cls:'acts'},[el('a',{cls:'act main',href:'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(c.indirizzo)+'&destination_place_id='+encodeURIComponent(c.placeId||c.id),target:'_blank',rel:'noopener',text:'🧭 Naviga'}),
-          c.maps?el('a',{cls:'act',href:c.maps,target:'_blank',rel:'noopener',text:'Scheda Google Maps'}):null,
+          /^https:\/\//i.test(c.maps||'')?el('a',{cls:'act',href:c.maps,target:'_blank',rel:'noopener',text:'Scheda Google Maps'}):null,
           c.telefonoLocale?el('a',{cls:'act',href:telLink(c.telefonoLocale),text:'📞 Locale'}):null])]),
       refs.length?el('div',{},[el('div',{cls:'sec',text:'Referenti'})].concat(refs)):null,
       (c.prodotti||[]).length?el('div',{},[el('div',{cls:'sec',text:'Prodotti'}),chips(c.prodotti,'p')]):null,
@@ -507,7 +507,7 @@ function statBlock(title,field){var c=countBy(field);var keys=Object.keys(c).sor
   return el('div',{},[el('div',{cls:'sec',text:title})].concat(keys.map(function(k){return el('div',{cls:'stat'},[el('span',{style:'min-width:130px',text:k}),el('div',{cls:'bar'},[el('i',{style:'width:'+(c[k]/max*100)+'%;background:'+(field==='zona'?(zoneColor[k]||'#f97316'):'#16a87a')})]),el('b',{text:String(c[k])})]);})));}
 document.getElementById('stbtn').addEventListener('click',function(){
   var refs=S.clients.reduce(function(s,c){return s+(c.referenti||[]).length;},0);
-  openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Statistiche'}),el('div',{cls:'msub',text:S.clients.length+' clienti · '+new Set(S.clients.map(function(c){return c.placeId||c.id;})).size+' locali · '+refs+' referenti'})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
+  openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Statistiche'}),el('div',{cls:'msub',text:new Set(S.clients.map(function(c){return c.placeId||c.id;})).size+' locali · '+refs+' referenti'})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
     el('div',{cls:'mbody'},[statBlock('Locali per zona','zona'),statBlock('Prodotti','prodotti'),statBlock('Sigilli','sigilli')])]);
 });
 
@@ -605,7 +605,7 @@ function openNewClient(){
       pag:PAGAMENTI.filter(function(x){return st.pag[x];}),place:st.place};
     if(st.omaggio&&!dati.sig.length){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
     save.disabled=true;save.textContent='Accesso a Google…';
-    function go(){salvaNuovo(dati).then(function(c){closeOv();toast('Cliente salvato in rubrica e sulla mappa ✓');setTimeout(function(){openDetail(c._doc||docId(c.id),true);},900);})
+    function go(){salvaNuovo(dati,st).then(function(c){closeOv();toast('Cliente salvato in rubrica e sulla mappa ✓');setTimeout(function(){openDetail(c._doc||docId(c.id),true);},900);})
       .catch(function(e){err.textContent=e.message;save.disabled=false;save.textContent='Salva in rubrica e sulla mappa';});}
     if(gTok&&gTok.exp>Date.now()+60000){go();return;}
     // la finestra di accesso Google deve partire dal tocco: niente attese prima di requestAccessToken
@@ -617,7 +617,7 @@ function openNewClient(){
     gClient.requestAccessToken();
   });
 }
-function salvaNuovo(x){
+function salvaNuovo(x,st){
   var pl=x.place,lat=pl.location.lat(),lng=pl.location.lng();
   var city=comp(pl,'locality').longText||comp(pl,'administrative_area_level_3').longText||comp(pl,'postal_town').longText;
   var via=comp(pl,'route').longText,num=comp(pl,'street_number').longText;
@@ -635,7 +635,13 @@ function salvaNuovo(x){
   body.clientData=[{key:'framezzino',value:JSON.stringify(dm)}];
   if(x.zona===ZONA_PROVV)body.clientData.push({key:'framezzino_decidere',value:JSON.stringify({motivo:MOTIVO_ZONA,data:new Date().toISOString().slice(0,10)})});
   var person;
-  return papi('people:createContact?personFields=names','POST',body).then(function(p){person=p;
+  // nuovo tentativo dopo un errore a meta': il contatto c'e' gia' (st.creato) -> si aggiorna quello, niente doppione
+  var crea=st&&st.creato?papi(st.creato+'?personFields='+PF).then(function(f){
+      body.organizations=body.organizations||[];
+      body.clientData=(f.clientData||[]).filter(function(c){return c.key!=='framezzino'&&c.key!=='framezzino_decidere';}).map(function(c){return {key:c.key,value:c.value};}).concat(body.clientData);
+      return contattoAggiorna(f,body,'names,phoneNumbers,addresses,urls,biographies,organizations,clientData');})
+    :papi('people:createContact?personFields=names','POST',body).then(function(p){if(st)st.creato=p.resourceName;return p;});
+  return crea.then(function(p){person=p;
     return papi('contactGroups?pageSize=1000&groupFields=name,groupType');
   }).then(function(r){
     var gs=(r.contactGroups||[]).filter(function(g){return g.groupType==='USER_CONTACT_GROUP';});
@@ -749,6 +755,7 @@ function aggiornaDaRubrica(daTocco){
     S.clients.forEach(function(s){(s.referenti||[]).forEach(function(x){if(rns[x.resourceName]&&x.rubrica)conta[x.rubrica]=(conta[x.rubrica]||0)+1;});});
     var rubrica=Object.keys(conta).sort(function(a,b){return conta[b]-conta[a];})[0]||(S.user&&S.user.email)||'rubrica';
     SY.rubrica=rubrica;
+    var rk=String(rubrica).toLowerCase();  // sui referenti "Jacopo"/"Marco", nelle copie "jacopo"/"marco"
     var exDi={};S.clients.forEach(function(c){(c.ex||[]).forEach(function(o){exDi[o]=c;});});
     var mio={};contacts.forEach(function(p){copieDi(p).forEach(function(x){mio[x]=p;});});  // rn (mio o della copia gemella) -> mio contatto
     var miei={},decidere=[],senza=0;
@@ -774,7 +781,7 @@ function aggiornaDaRubrica(daTocco){
       var m=miei[pid],nuoviRn={};(m?m.refs:[]).forEach(function(p){copieDi(p).forEach(function(k){nuoviRn[k]=1;});});
       // referenti dell'altra rubrica ancora da tenere: non sono miei (ne' la mia copia), e non cancellati dalla mia rubrica
       var altri=(c.referenti||[]).filter(function(x){return x.rubrica!==rubrica&&!rnsRef(x).some(function(k){return nuoviRn[k]||mio[k];})
-        &&!(x.copie&&x.copie[rubrica]&&!rns[x.copie[rubrica]]);});
+        &&!(x.copie&&x.copie[rk]&&!rns[x.copie[rk]]);});
       var refs=altri.concat((m?m.refs:[]).map(function(p){var v=null;copieDi(p).some(function(k){v=vecchi[k];return !!v;});return referenteDa(p,rubrica,v);}));
       delete miei[pid];
       if(!refs.length){togli.push(c);return;}
@@ -843,6 +850,7 @@ function lanciaScript(account){
     .then(function(j){var run=(j.workflow_runs||[]).find(function(x){return new Date(x.created_at).getTime()>=t0;});
       if(!run){if(giri>12)throw new Error('Lo script nel cloud non è partito: riprova tra poco.');return poll();}
       if(run.status!=='completed'){if(giri>60)throw new Error('Lo script nel cloud ci sta mettendo troppo: la mappa si aggiorna al prossimo 🔄.');return poll();}
+      if(run.conclusion==='cancelled')throw new Error('Lo script nel cloud è stato sostituito da un altro giro partito subito dopo (dell\'altro telefono o delle 13): aggiorno lo stesso la mappa, riprova 🔄 tra qualche minuto.');
       if(run.conclusion!=='success')throw new Error('Lo script nel cloud non è andato a buon fine (GitHub manda un\'email con i dettagli): aggiorno lo stesso la mappa.');
       return run;});}
   return ghApi('/actions/workflows/'+GH.wf+'/dispatches','POST',{ref:'main',inputs:{account:account}}).then(poll);
@@ -961,6 +969,35 @@ function scatolaLocale(pl,nota){return el('div',{cls:'placebox'},[el('b',{text:p
   pl.businessStatus&&pl.businessStatus!=='OPERATIONAL'?el('div',{style:'color:var(--red);font-weight:700',text:'⚠ Google lo indica come chiuso'}):null,
   nota?el('div',{style:'margin-top:4px;font-weight:700',text:nota}):null]);}
 
+// Modifica con piu' referenti dello stesso locale: ognuno tiene i suoi prodotti/sigilli/note, si applicano solo
+// le differenze scelte nel modulo (aggiunto / tolto / omaggio cambiato / pezzi di "Altro" aggiunti o tolti)
+function pezziAltro(s){return (s||'').split(/\s+\/\s+|\n/).map(function(x){return x.trim();}).filter(Boolean);}
+function modificheScelte(v,v0,altroPrima,altroOra){
+  function d(a,b){return {piu:Object.keys(a).filter(function(x){return a[x]&&!b[x];}),meno:Object.keys(b).filter(function(x){return b[x]&&!a[x];})};}
+  var pp=pezziAltro(altroPrima),po=pezziAltro(altroOra),r={prod:d(v.prod,v0.prod),sig:d(v.sig,v0.sig),pag:d(v.pag,v0.pag),
+    omaggio:v.omaggio!==v0.omaggio?v.omaggio:null,omaggioOra:v.omaggio,altroCambiato:altroPrima!==altroOra,altroOra:altroOra,
+    altroPiu:po.filter(function(x){return pp.indexOf(x)<0;}),altroMeno:pp.filter(function(x){return po.indexOf(x)<0;})};
+  r.nota=r.altroCambiato||r.omaggio!==null||['prod','sig','pag'].some(function(k){return r[k].piu.length||r[k].meno.length;});
+  return r;}
+function valPer(p,dif){var n=notaDi(p);
+  function applica(lista,dd){var out=lista.filter(function(x,i){return dd.meno.indexOf(x)<0&&lista.indexOf(x)===i;});
+    dd.piu.forEach(function(x){if(out.indexOf(x)<0)out.push(x);});return out;}
+  var om=/\s*\(omaggio\)$/i,sig=[],basi=[];
+  tutteRighe(n,'Sigilli').forEach(function(x){x=canon(x,SIGILLI);var o=om.test(x),b=x.replace(om,'');
+    if(dif.sig.meno.indexOf(b)>=0||basi.indexOf(b)>=0)return;if(dif.omaggio!==null)o=dif.omaggio;basi.push(b);sig.push(b+(o?' (omaggio)':''));});
+  dif.sig.piu.forEach(function(b){if(basi.indexOf(b)<0){basi.push(b);sig.push(b+(dif.omaggioOra?' (omaggio)':''));}});
+  var altro=altroNota(n)[0]||'';
+  if(dif.altroCambiato){if(dif.unico)altro=dif.altroOra;else{var pz=pezziAltro(altro).filter(function(x){return dif.altroMeno.indexOf(x)<0;});
+    dif.altroPiu.forEach(function(x){if(pz.indexOf(x)<0)pz.push(x);});altro=pz.join(' / ');}}
+  return {prodotti:applica(tutteRighe(n,'Prodotti').map(function(x){return canon(x,PRODOTTI);}),dif.prod),
+    pagamento:applica(tutteRighe(n,'Pagamento').map(function(x){return canon(x,PAGAMENTI);}),dif.pag),sigilli:sig,altro:altro};}
+// dati fiscali confrontati "puliti" (spazi, P.I./P.IVA, SDI minuscolo): niente scritture se non sono cambiati davvero
+function orgNorm(o){return {az:(o.az||'').trim().replace(/\s+/g,' '),
+  piva:(o.piva||'').replace(/^\s*(P\.?\s*IVA|P\.?\s*I\.?|Partita\s*IVA)\s*:?\s*/i,'').replace(/\s/g,''),
+  sdi:(o.sdi||'').replace(/^\s*SDI\s*:?\s*/i,'').trim().toUpperCase()};}
+// la ditta nuova va solo nei referenti che avevano la stessa ditta (o nessuna), non in quelli con una ditta diversa
+function orgCompatibile(p,prima){var o=(p.organizations||[])[0]||{},m=orgNorm({az:o.name,piva:/\d{6,}/.test(o.title||'')?o.title:'',sdi:o.department});
+  return ['az','piva','sdi'].every(function(k){return !m[k]||!prima[k]||m[k].toLowerCase()===prima[k].toLowerCase();});}
 // ✏️ Modifica della scheda: prodotti, sigilli, pagamento, note, dati fiscali (dei MIEI referenti), nome, locale, zona
 function openModifica(c){
   attesaOv('Modifica · '+c.locale);
@@ -982,6 +1019,8 @@ function formModifica(c,miei,gs){
     var o=(p.organizations||[])[0]||{};if(!org.az&&o.name)org.az=o.name;
     var pv=(o.title||'').replace(/^P\.?\s*IVA\s*/i,'');if(!org.piva&&/\d{6,}/.test(pv))org.piva=pv;
     var sd=(o.department||'').replace(/^SDI\s*/i,'');if(!org.sdi&&sd)org.sdi=sd;});
+  // com'era all'apertura: al salvataggio si scrive in ogni referente SOLO quello che e' stato cambiato
+  var v0={prod:Object.assign({},v.prod),sig:Object.assign({},v.sig),pag:Object.assign({},v.pag),omaggio:v.omaggio},altro0=altro.join(' / ');
   function righe(lista,obj){var tutte=lista.concat(Object.keys(obj).filter(function(x){return lista.indexOf(x)<0;}));
     return el('div',{cls:'chips'},tutte.map(function(x){var b=el('button',{cls:'chip'+(obj[x]?' on':''),type:'button',text:x,onclick:function(){obj[x]=!obj[x];b.classList.toggle('on',!!obj[x]);}});return b;}));}
   function campo(ph,val){var i=el('input',{cls:'fi sm',placeholder:ph,autocomplete:'off'});i.value=val||'';return i;}
@@ -1014,16 +1053,15 @@ function formModifica(c,miei,gs){
   save.addEventListener('click',function(){
     err.textContent='';var ora=oraIso(),pid=c.placeId||c.id,locale=fLocale.value.trim()||c.locale,zona=zsel.value,pl=st.place;
     var cambiaLoc=!!pl&&pl.id!==pid,cambiaZona=zona!==c.zona,cambiaNome=locale!==c.locale;
-    var val={prodotti:Object.keys(v.prod).filter(function(x){return v.prod[x];}),pagamento:Object.keys(v.pag).filter(function(x){return v.pag[x];}),
-      sigilli:Object.keys(v.sig).filter(function(x){return v.sig[x];}).map(function(x){return x+(v.omaggio?' (omaggio)':'');}),altro:fAltro.value.trim()};
-    if(v.omaggio&&!val.sigilli.length){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
-    var orgNuova={az:fAz.value.trim(),piva:fPiva.value.replace(/\s/g,''),sdi:fSdi.value.trim().toUpperCase()},cambiaOrg=JSON.stringify(orgNuova)!==JSON.stringify(org);
+    if(v.omaggio&&!Object.keys(v.sig).some(function(x){return v.sig[x];})){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
+    var dif=modificheScelte(v,v0,altro0,fAltro.value.trim());dif.unico=miei.length===1;
+    var orgNuova=orgNorm({az:fAz.value,piva:fPiva.value,sdi:fSdi.value}),orgPrima=orgNorm(org),cambiaOrg=JSON.stringify(orgNuova)!==JSON.stringify(orgPrima);
     var dmNuovo=cambiaLoc?dmDaPlace(pl,locale,zona):null;
     save.disabled=true;save.textContent='Salvo…';
     miei.reduce(function(pr,p){return pr.then(function(fatti){
       var body={},campi=[];
-      var nn=notaNuova(notaDi(p),val);if(nn.trim()!==notaDi(p).trim()){body.biographies=nn?[{value:nn,contentType:'TEXT_PLAIN'}]:[];campi.push('biographies');}
-      if(cambiaOrg){var o=(p.organizations||[])[0]||{},resto=(p.organizations||[]).slice(1).map(function(x){var y={};['name','title','department','type'].forEach(function(k){if(x[k])y[k]=x[k];});return y;});
+      var nn=dif.nota?notaNuova(notaDi(p),valPer(p,dif)):notaDi(p);if(nn.trim()!==notaDi(p).trim()){body.biographies=nn?[{value:nn,contentType:'TEXT_PLAIN'}]:[];campi.push('biographies');}
+      if(cambiaOrg&&orgCompatibile(p,orgPrima)){var o=(p.organizations||[])[0]||{},resto=(p.organizations||[]).slice(1).map(function(x){var y={};['name','title','department','type'].forEach(function(k){if(x[k])y[k]=x[k];});return y;});
         var tit=orgNuova.piva?'P.IVA '+orgNuova.piva:((o.title||'')&&!/\d{6,}/.test(o.title)?o.title:'');
         var nuovaO={name:orgNuova.az,title:tit,department:orgNuova.sdi?'SDI '+orgNuova.sdi:'',type:o.type||'work'};
         body.organizations=(nuovaO.name||nuovaO.title||nuovaO.department?[nuovaO]:[]).concat(resto);campi.push('organizations');}
@@ -1110,7 +1148,8 @@ document.getElementById('mbtn').addEventListener('click',function(){
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🗺️ Mostra tutti sulla mappa',onclick:function(){S.f={zone:{},prod:{},sig:{},pag:{}};S.q='';document.getElementById('search').value='';applyFilters(true);closeOv();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🔑 Cambia password di cifratura',onclick:openRekey}),
       el('button',{cls:'act',style:'justify-content:flex-start;color:var(--red)',text:'↩ Esci',onclick:function(){if(!window.confirm('Vuoi uscire? La chiave di cifratura verrà rimossa da questo dispositivo.'))return;
-        if(unsub)unsub();S.key=null;S.clients=[];dropKey().then(function(){auth.signOut();closeOv();});}})])]);
+        if(unsub)unsub();S.key=null;S.clients=[];gTok=null;try{localStorage.removeItem('fn_gtok');}catch(e){}
+        dropKey().then(function(){auth.signOut();closeOv();});}})])]);
 });
 
 // ── CAMBIO PASSWORD DI CIFRATURA: decifra tutto con la vecchia e ricifra con la nuova ──
