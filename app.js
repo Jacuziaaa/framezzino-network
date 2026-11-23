@@ -255,8 +255,19 @@ document.getElementById('sort').addEventListener('change',function(){S.sort=this
 })();
 
 // ── DETTAGLIO ─────────────────────────────────────────────────────────────
-function openOv(content){var m=document.getElementById('modal');m.innerHTML='';m.appendChild(el('div',{cls:'mh'}));content.forEach(function(x){m.appendChild(x);});document.getElementById('ov').classList.add('show');}
-function closeOv(){document.getElementById('ov').classList.remove('show');}
+// TASTO INDIETRO (review 23/11, Jacopo): una finestra aperta occupa un passo della cronologia, cosi' il tasto indietro
+// del telefono chiude la finestra invece di uscire dall'app (e quello che si stava scrivendo non si perde)
+// Il passo di una finestra chiusa si toglie subito dopo (setTimeout), solo se intanto non se n'e' aperta un'altra
+// (chiudi + apri subito: la finestra nuova usa lo stesso passo; Chrome con back() + pushState insieme tornava indietro di due)
+var OV_PASSO=false,SALTA_POP=0,CHIUDI_DOPO=false;
+function openOv(content){var m=document.getElementById('modal');m.innerHTML='';m.appendChild(el('div',{cls:'mh'}));content.forEach(function(x){m.appendChild(x);});document.getElementById('ov').classList.add('show');
+  CHIUDI_DOPO=false;if(!OV_PASSO){OV_PASSO=true;try{history.pushState({ov:1},'','');}catch(e){}}}
+function closeOv(){document.getElementById('ov').classList.remove('show');
+  if(!OV_PASSO||CHIUDI_DOPO)return;CHIUDI_DOPO=true;
+  setTimeout(function(){if(!CHIUDI_DOPO)return;CHIUDI_DOPO=false;if(document.getElementById('ov').classList.contains('show'))return;
+    OV_PASSO=false;if(history.state&&history.state.ov){SALTA_POP++;history.back();}},0);}
+window.addEventListener('popstate',function(){if(SALTA_POP>0){SALTA_POP--;return;}  // indietro fatto dall'app chiudendo
+  if(OV_PASSO||document.getElementById('ov').classList.contains('show')){OV_PASSO=false;CHIUDI_DOPO=false;document.getElementById('ov').classList.remove('show');}});
 document.getElementById('ov').addEventListener('click',function(e){if(e.target.id==='ov')closeOv();});
 function openDetail(id,pan){
   var c=S.clients.find(function(x){return x._id===id;});if(!c)return;S.sel=id;renderList();
