@@ -45,6 +45,35 @@ function el(tag,a,kids){var e=document.createElement(tag);if(a)for(var k in a){v
   (kids||[]).forEach(function(c){if(c!=null)e.appendChild(typeof c==='string'?document.createTextNode(c):c);});return e;}
 function show(id){['login','crypto'].forEach(function(p){document.getElementById(p).classList.toggle('show',p===id);});document.getElementById('app').classList.toggle('show',id==='app');document.getElementById('loader').style.display='none';}
 function norm(s){return (s||'').toString().normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();}
+// NOME DEL REFERENTE (27/11, Jacopo: in "L'Ingrediente Segreto" si vedeva "Referente" invece di "Milena"). Se la scheda non ha
+// il nome della persona, o il nome non c'e' piu' nel contatto (rinominato), si prende dal contatto in rubrica: le parole in fondo
+// dopo il nome del locale ("Tram Vicenza Bar L'Ingrediente Segreto Milena" -> "Milena"). Solo se sembra un nome di persona
+// (1-4 parole di sole lettere, niente ditte, prodotti, email, numeri): altrimenti resta "Referente" (il nome intero e' scritto sotto).
+var REF_GENERICHE=['bar','caffe','cafe','caffetteria','pub','bistrot','bistro','ristorante','pizzeria','pasticceria','gelateria','osteria','hostaria',
+  'trattoria','panificio','tabacchi','tabaccheria','distributore','distr','eni','enilive','q8','esso','snack','birreria','enoteca','hotel','albergo',
+  'chiosco','paninoteca','piadineria','lounge','gastronomia','circolo','farmacia','agriturismo','locanda','spaccio','mensa','tavola','calda'];
+var REF_NON_NOME=['srl','sas','snc','spa','srls','soc','ditta','ufficio','uff','uffici','ordini','amministrazione','resp','responsabile','acquisti',
+  'mail','email','paga','pag','elle','esse','emme','magnum','maxi','tostoni','sig','om','color','fat','fatt','iva','piva','tv','vr','vi','pd','nuovo',
+  'nuova','intestazione','addetta','addetto','collega','fronte','aeroporto','service','servizi','trade','team','group','food','drink','drinks','coffee',
+  'cooffee','club','bio','track','shell','petrol','fuel','gas','golf','padel','centro','center','si','no'];
+var REF_FERMA=['via','viale','piazza','piazzale','corso','contra','contrada','strada','presso','ex','dal','civico','loc','localita'];
+function tokRef(s){return norm(s).replace(/[^a-z0-9]+/g,' ').trim().split(' ').filter(Boolean);}
+function nomeDaContatto(contatto,c){
+  var parole=String(contatto||'').trim().split(/\s+/).filter(Boolean);
+  if(parole.length&&/^ex$/i.test(parole[0]))parole.shift();
+  if(parole.length&&/^(tram|tam)$/i.test(parole[0]))parole.shift();
+  var loc={};tokRef([c.locale,c.nomeGoogle,c.comune].join(' ')).forEach(function(t){loc[t]=1;});var lk=Object.keys(loc);
+  function delLocale(t){if(loc[t]||REF_GENERICHE.indexOf(t)>=0)return true;
+    return t.length>=4&&lk.some(function(l){return l.length>=4&&(t.indexOf(l)===0||l.indexOf(t)===0);});}
+  var ref=[];
+  for(var i=parole.length-1;i>=0;i--){var t=tokRef(parole[i]);if(!t.length)continue;  // emoji: saltate
+    if(REF_FERMA.indexOf(t[0])>=0||t.some(delLocale))break;ref.unshift(parole[i]);}
+  var parti=[];ref.forEach(function(w){parti=parti.concat(tokRef(w));});
+  if(!ref.length||ref.length>=parole.length||ref.length>4||/[0-9@:+\/]/.test(ref.join(' '))||parti.some(function(x){return REF_NON_NOME.indexOf(x)>=0;}))return '';
+  return ref.join(' ');}
+function nomeRef(r,c){var n=String(r.nome||'').trim();
+  if(n&&(!r.contatto||norm(r.contatto).indexOf(norm(n))>=0))return n;
+  return nomeDaContatto(r.contatto,c||{})||n;}
 function telLink(t){return 'tel:'+t.replace(/[^\d+]/g,'');}
 // WhatsApp: cellulare italiano con o senza +39 / 0039 (anche "392 …", "393 …" scritti senza prefisso); '' se non e' un cellulare
 function waLink(t){var d=(t||'').replace(/\D/g,'');if(d.indexOf('0039')===0)d=d.slice(2);if(/^3\d{8,9}$/.test(d))d='39'+d;
@@ -229,7 +258,7 @@ function renderList(){
   document.getElementById('scount').textContent=S.exMode==='solo'?nEx+(nEx===1?' ex cliente':' ex clienti')+(nEx!==S.ex.length?' di '+S.ex.length:'')
     :nAtt+(nAtt===1?' locale':' locali')+(nAtt!==S.clients.length?' di '+S.clients.length:'')+(nEx?' + '+nEx+' ex':'');mostraAggiornata();
   arr.forEach(function(c){
-    var refs=(c.referenti||[]).map(function(r){return r.nome;}).filter(Boolean).join(', ');
+    var refs=(c.referenti||[]).map(function(r){return nomeRef(r,c);}).filter(Boolean).join(', ');
     var km=S.sort==='vicino'&&S.me?' · '+dist(S.me,c).toFixed(1)+' km':'';
     L.appendChild(el('div',{cls:'row'+(S.sel===c._id?' sel':'')+(c._ex?' exrow':''),onclick:function(){openDetail(c._id,true);}},[
       el('span',{cls:'zdot',style:'background:'+(c._ex?'#94a3b8':(zoneColor[c.zona]||'#f97316'))}),
@@ -305,7 +334,7 @@ function openDetail(id,pan){
   if(c._ex){openDetailEx(c);return;}
   var refs=(c.referenti||[]).map(function(r){
     var acts=(r.telefoni||[]).map(function(t){return el('div',{cls:'acts'},[el('a',{cls:'act',href:telLink(t),text:'📞 '+t}),isMobile(t)?el('a',{cls:'act wa',href:waLink(t),target:'_blank',rel:'noopener',text:'WhatsApp'}):null]);});
-    return el('div',{cls:'ref'},[el('div',{cls:'refn',text:r.nome||'Referente'}),el('div',{cls:'refc',text:'In rubrica: '+r.contatto})].concat(acts));});
+    return el('div',{cls:'ref'},[el('div',{cls:'refn',text:nomeRef(r,c)||'Referente'}),el('div',{cls:'refc',text:'In rubrica: '+r.contatto})].concat(acts));});
   var kv=[];[['Ragione sociale',c.azienda],['P.IVA',c.piva],['SDI',c.sdi],['Tel. locale',c.telefonoLocale]].forEach(function(x){if(x[1]){kv.push(el('span',{text:x[0]}));kv.push(el('span',{text:x[1]}));}});
   function chips(arr,cls){return el('div',{cls:'pills'},(arr||[]).map(function(p){return el('span',{cls:'pill '+cls,text:p,style:'font-size:12px;padding:4px 10px'});}));}
   openOv([
@@ -328,7 +357,7 @@ function openDetail(id,pan){
 function openDetailEx(c){
   var refs=(c.referenti||[]).map(function(r){
     var acts=(r.telefoni||[]).map(function(t){return el('div',{cls:'acts'},[el('a',{cls:'act',href:telLink(t),text:'📞 '+t}),isMobile(t)?el('a',{cls:'act wa',href:waLink(t),target:'_blank',rel:'noopener',text:'WhatsApp'}):null]);});
-    return el('div',{cls:'ref'},[el('div',{cls:'refn',text:r.nome||'Referente'}),el('div',{cls:'refc',text:'In rubrica: '+r.contatto})].concat(acts));});
+    return el('div',{cls:'ref'},[el('div',{cls:'refn',text:nomeRef(r,c)||'Referente'}),el('div',{cls:'refc',text:'In rubrica: '+r.contatto})].concat(acts));});
   function chips(arr,cls){return el('div',{cls:'pills'},(arr||[]).map(function(p){return el('span',{cls:'pill '+cls,text:p,style:'font-size:12px;padding:4px 10px'});}));}
   var bR=el('button',{cls:'act main',type:'button',text:'↩ Ripristina come cliente',onclick:function(){ripristinaEx(c,bR);}});
   var bE=el('button',{cls:'act',type:'button',style:'color:var(--red)',text:'🗑️ Elimina definitivamente',onclick:function(){eliminaEx(c,bE);}});
@@ -493,7 +522,7 @@ function openNewClient(){
       var gia=S.clients.filter(function(c){return (c.placeId||c.id)===pl.id;});
       box.innerHTML='';box.appendChild(el('div',{cls:'placebox'},[el('b',{text:pl.displayName}),el('div',{text:pl.formattedAddress}),
         pl.businessStatus&&pl.businessStatus!=='OPERATIONAL'?el('div',{style:'color:var(--red);font-weight:700',text:'⚠ Google lo indica come chiuso'}):null,
-        gia.length?el('div',{style:'margin-top:4px;font-weight:700',text:'Già sulla mappa con: '+gia.map(function(c){return (c.referenti&&c.referenti[0]&&c.referenti[0].nome)||c.locale;}).join(', ')+' — verrà aggiunto come referente in più.'}):null]));
+        gia.length?el('div',{style:'margin-top:4px;font-weight:700',text:'Già sulla mappa con: '+gia.map(function(c){return (c.referenti&&c.referenti[0]&&nomeRef(c.referenti[0],c))||c.locale;}).join(', ')+' — verrà aggiunto come referente in più.'}):null]));
     }).catch(function(e){err.textContent='Dettagli del locale non disponibili: '+e.message;});
   }
   openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'Nuovo cliente'}),el('div',{cls:'msub',text:'Salvato già sistemato nella rubrica Google e sulla mappa'})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
@@ -1036,7 +1065,7 @@ function formModifica(c,miei,gs){
   var save=el('button',{cls:'sbtn',style:'background:var(--orange);color:#fff;width:100%;margin-top:16px',text:'Salva in rubrica e sulla mappa'});
   var info=[];
   if(!miei.length)info.push('Nessun referente di questo locale è nella tua rubrica Google: puoi cambiare nome, locale e zona; prodotti e note li cambia chi ha il contatto.');
-  else if(altri.length)info.push('Referenti nell\'altra rubrica: '+altri.map(function(r){return r.nome||r.contatto;}).join(', ')+'. I loro prodotti e note li cambia chi ha quella rubrica; nome, locale e zona si allineano da soli al suo 🔄.');
+  else if(altri.length)info.push('Referenti nell\'altra rubrica: '+altri.map(function(r){return nomeRef(r,c)||r.contatto;}).join(', ')+'. I loro prodotti e note li cambia chi ha quella rubrica; nome, locale e zona si allineano da soli al suo 🔄.');
   openOv([testata('Modifica · '+c.locale,miei.length?'Nella tua rubrica: '+miei.map(function(p){return ((p.names||[])[0]||{}).displayName||'';}).join(', '):'Solo mappa'),
     el('div',{cls:'mbody'},[
       info.length?el('p',{cls:'msub',style:'margin-top:0',text:info.join(' ')}):null,
