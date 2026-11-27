@@ -953,7 +953,7 @@ function lanciaScript(account,senzaFreno){
       if(run.status!=='completed'){if(giri>60)throw new Error('Lo script nel cloud ci sta mettendo troppo: la mappa si aggiorna al prossimo 🔄.');return poll();}
       if(run.conclusion==='cancelled')throw new Error('Lo script nel cloud è stato sostituito da un altro giro partito subito dopo (dell\'altro telefono o delle 13): aggiorno lo stesso la mappa, riprova 🔄 tra qualche minuto.');
       if(run.conclusion!=='success')return motiviGiro(run).then(function(m){SY.cloud={ok:false,quando:run.updated_at,motivi:m};segnaSync();
-        throw new Error('Lo script nel cloud si è fermato'+(m.length?': '+m.map(function(x){return x.titolo;}).join(', '):'')+'. Spiegazione e sblocco: 🔄. Aggiorno lo stesso la mappa.');});
+        throw new Error('Lo script nel cloud '+testoKo(m)+(m.length?': '+m.map(function(x){return x.titolo;}).join(', '):'')+'. Spiegazione e sblocco: 🔄. Aggiorno lo stesso la mappa.');});
       SY.cloud={ok:true,quando:run.updated_at};segnaSync();
       return run;});}
   var inputs={account:account};if(senzaFreno)inputs.senza_freno='true';
@@ -1442,26 +1442,31 @@ var SPIEGA={
   'FRENO rubrica':'Il freno di sicurezza si è attivato: in un giro solo c\'erano più di 30 contatti nuovi o più di 50 modificati in questa rubrica, e lo script non ha toccato niente. Succede se si salvano o si importano tanti contatti insieme, oppure se un telefono ha riscritto la rubrica.',
   'FRENO allineamento':'Il freno di sicurezza dell\'allineamento si è attivato: tra le due rubriche c\'erano più di 10 clienti da cancellare, 60 nuovi o 40 modifiche da copiare in un giro solo, e non è stato toccato niente. Se qualcuno ha cancellato tanti clienti per sbaglio, sbloccando le cancellazioni arrivano anche all\'altro (restano 30 giorni nel cestino di Google Contatti).',
   'ERRORE rubrica':'Lo script si è fermato con un errore. Spesso è l\'accesso Google della rubrica scaduto (va rifatto dal PC con Claude) oppure Google che non rispondeva: riprova con «Sistema la rubrica»; se si ripete, avvisa Claude.',
-  'ERRORE allineamento':'Alcuni clienti non sono stati copiati nell\'altra rubrica (errore di rete o contatto cambiato proprio in quel momento): si riprova da solo al giro dopo. Se si ripete, avvisa Claude.'};
+  'ERRORE allineamento':'Alcuni clienti non sono stati copiati nell\'altra rubrica (errore di rete o contatto cambiato proprio in quel momento): si riprova da solo al giro dopo. Se si ripete, avvisa Claude.',
+  'ERRORE contatti':'Il giro è stato fatto, ma Google ha dato errore su alcuni contatti (di solito perché erano appena stati modificati): lo script li riprova da solo al giro dopo. Se si ripete, avvisa Claude.'};
 function motiviGiro(run){return ghApi('/actions/runs/'+run.id+'/jobs').then(function(j){var out=[];
   ((j.jobs||[])[0]||{steps:[]}).steps.forEach(function(s){var m=/^(FRENO|ERRORE): (.+)$/.exec(s.name||'');if(!m||s.conclusion!=='failure')return;
     var acc=/Jacopo/.test(m[2])?'jacopo':/Marco/.test(m[2])?'marco':'';
-    out.push({tipo:m[1],titolo:m[1]==='FRENO'?'freno di sicurezza ('+m[2]+')':'errore ('+m[2]+')',account:acc,spiega:SPIEGA[m[1]+' '+(acc?'rubrica':'allineamento')]});});
+    var parz=m[1]==='ERRORE'&&/^contatti/.test(m[2]);  // 28/11: giro fatto, errori solo su alcuni contatti
+    out.push({tipo:m[1],titolo:m[1]==='FRENO'?'freno di sicurezza ('+m[2]+')':parz?'errori su alcuni '+m[2]:'errore ('+m[2]+')',account:acc,parziale:parz,
+      spiega:SPIEGA[m[1]+' '+(parz?'contatti':acc?'rubrica':'allineamento')]});});
   return out;}).catch(function(){return [];});}
+// "si è fermato" solo se c'è un freno o un errore vero; con soli errori su alcuni contatti il giro è stato fatto
+function testoKo(m){return (m||[]).length&&m.every(function(x){return x.parziale;})?'ha avuto errori su alcuni contatti':'si è fermato';}
 function statoCloud(){return ghToken().then(function(tok){if(!tok)return null;
   return ghApi('/actions/workflows/'+GH.wf+'/runs?per_page=6').then(function(j){
     var run=(j.workflow_runs||[]).find(function(x){return x.status==='completed'&&x.conclusion!=='cancelled'&&x.conclusion!=='skipped';});
     if(!run)return null;if(run.conclusion==='success')return {ok:true,quando:run.updated_at};
     return motiviGiro(run).then(function(m){return {ok:false,quando:run.updated_at,motivi:m};});});}).catch(function(){return null;});}
 function controllaCloud(avvisa){return statoCloud().then(function(c){if(!c)return;var prima=SY.cloud;SY.cloud=c;segnaSync();
-  if(avvisa&&!c.ok&&!(prima&&prima.ok===false))toast('⚠ Lo script nel cloud si è fermato'+(c.motivi.length?': '+c.motivi.map(function(x){return x.titolo;}).join(', '):'')+'. Tocca 🔄 per sapere cosa fare.',true);});}
+  if(avvisa&&!c.ok&&!(prima&&prima.ok===false))toast('⚠ Lo script nel cloud '+testoKo(c.motivi)+(c.motivi.length?': '+c.motivi.map(function(x){return x.titolo;}).join(', '):'')+'. Tocca 🔄 per sapere cosa fare.',true);});}
 function quandoBreve(iso){var d=new Date(iso);if(isNaN(d))return '';var ieri=new Date(Date.now()-864e5),hm=d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
   return (d.toDateString()===new Date().toDateString()?'oggi':d.toDateString()===ieri.toDateString()?'ieri':d.toLocaleDateString('it-IT',{day:'numeric',month:'short'}))+' alle '+hm;}
 function boxCloud(){var box=el('div',{style:'margin-top:10px'});
   function disegna(c){box.innerHTML='';if(!c)return;
     if(c.ok){box.appendChild(el('div',{cls:'msub',text:'Script nel cloud: ultimo giro '+quandoBreve(c.quando)+' ✓'}));return;}
     var frena=(c.motivi||[]).filter(function(m){return m.tipo==='FRENO';});
-    var righe=[el('div',{style:'font-weight:800;color:var(--red)',text:'⚠ Lo script nel cloud si è fermato ('+quandoBreve(c.quando)+')'})];
+    var righe=[el('div',{style:'font-weight:800;color:var(--red)',text:'⚠ Lo script nel cloud '+testoKo(c.motivi)+' ('+quandoBreve(c.quando)+')'})];
     (c.motivi||[]).forEach(function(m){righe.push(el('div',{style:'margin-top:6px;font-weight:700',text:'• '+m.titolo}));if(m.spiega)righe.push(el('div',{cls:'msub',style:'margin-top:2px',text:m.spiega}));});
     if(!(c.motivi||[]).length)righe.push(el('div',{cls:'msub',style:'margin-top:4px',text:'Motivo non chiaro: riprova con «Sistema la rubrica»; se si ripete, avvisa Claude.'}));
     if(frena.length){var acc=frena.every(function(m){return m.account==='jacopo';})?'jacopo':frena.every(function(m){return m.account==='marco';})?'marco':'entrambi';
