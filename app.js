@@ -340,8 +340,8 @@ function openDetail(id,pan){
   openOv([
     el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:c.locale}),el('div',{cls:'msub',text:(c.comune||'')+(c.provincia?' ('+c.provincia+')':'')+' · Zona '+c.zona})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
     el('div',{cls:'mbody'},[
-      el('div',{},[el('div',{cls:'sec',text:'Indirizzo verificato'}),el('div',{cls:'addr',text:c.indirizzo}),
-        el('div',{cls:'acts'},[el('a',{cls:'act main',href:'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(c.indirizzo)+'&destination_place_id='+encodeURIComponent(c.placeId||c.id),target:'_blank',rel:'noopener',text:'🧭 Naviga'}),
+      el('div',{},[el('div',{cls:'sec',text:c.posManuale?'Indirizzo · 📍 posizione corretta a mano':'Indirizzo verificato'}),el('div',{cls:'addr',text:c.indirizzo}),
+        el('div',{cls:'acts'},[el('a',{cls:'act main',href:linkNaviga(c),target:'_blank',rel:'noopener',text:'🧭 Naviga'}),
           /^https:\/\//i.test(c.maps||'')?el('a',{cls:'act',href:c.maps,target:'_blank',rel:'noopener',text:'Scheda Google Maps'}):null,
           c.telefonoLocale?el('a',{cls:'act',href:telLink(c.telefonoLocale),text:'📞 Locale'}):null])]),
       refs.length?el('div',{},[el('div',{cls:'sec',text:'Referenti'})].concat(refs)):null,
@@ -366,7 +366,7 @@ function openDetailEx(c){
     el('div',{cls:'mbody'},[
       el('div',{cls:'exban',text:'Non è più cliente: è in rubrica come «Ex Tram …» con l\'etichetta «Ex clienti Framezzino».'}),
       el('div',{},[el('div',{cls:'sec',text:'Indirizzo'}),el('div',{cls:'addr',text:c.indirizzo||''}),
-        el('div',{cls:'acts'},[el('a',{cls:'act',href:'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(c.indirizzo||'')+'&destination_place_id='+encodeURIComponent(c.placeId||c.id),target:'_blank',rel:'noopener',text:'🧭 Naviga'}),
+        el('div',{cls:'acts'},[el('a',{cls:'act',href:linkNaviga(c),target:'_blank',rel:'noopener',text:'🧭 Naviga'}),
           /^https:\/\//i.test(c.maps||'')?el('a',{cls:'act',href:c.maps,target:'_blank',rel:'noopener',text:'Scheda Google Maps'}):null])]),
       refs.length?el('div',{},[el('div',{cls:'sec',text:'Referenti'})].concat(refs)):null,
       (c.prodotti||[]).length?el('div',{},[el('div',{cls:'sec',text:'Prendeva'}),chips(c.prodotti,'p')]):null,
@@ -708,7 +708,7 @@ function ricomponi(c,refs,dm){
   if(tipi.length)n.sigilli=tipi;
   // se due referenti hanno valori diversi resta quello che la scheda aveva gia' (se uno dei referenti ce l'ha ancora)
   ['azienda','piva','sdi'].forEach(function(k){var r=refs.find(function(r){return r[k]&&r[k]===c[k];})||refs.find(function(r){return r[k];});if(r)n[k]=r[k];else if(n[k]==null)n[k]='';});
-  if(dm&&!n.lat){['nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona'].forEach(function(k){if(dm[k]!=null)n[k]=dm[k];});
+  if(dm&&!n.lat){['nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona','posManuale'].forEach(function(k){if(dm[k]!=null)n[k]=dm[k];});
     if(!n.locale)n.locale=dm.locale||dm.nomeGoogle;}
   n.referenti=refs;return n;
 }
@@ -723,7 +723,8 @@ function leggiRubrica(){
 // sta nella scheda e nel campo nascosto dei contatti. Se il contatto e' piu' recente la scheda prende il suo locale/zona;
 // se la scheda e' piu' recente (cambiata dall'altra rubrica) il contatto si allinea: campo nascosto e gruppo della zona.
 // "ex" nella scheda = locali Google di prima (locale cambiato dall'app): i contatti con il locale vecchio ci finiscono dentro.
-var LOC=['placeId','nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona'];
+// "posManuale" (27/11): posizione corretta a mano (Modifica -> 📍 Correggi la posizione), segue lat/lng
+var LOC=['placeId','nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona','posManuale'];
 function aggiornaDaRubrica(daTocco){
   if(SY.running)return;
   // con la sola copia del telefono (senza rete o appena aperta) la mappa potrebbe essere vecchia: non si riscrive niente
@@ -782,7 +783,7 @@ function aggiornaDaRubrica(daTocco){
       if(!refs.length){togli.push(c);return;}
       var n=ricomponi(c,refs,null);
       var nuovo=null;(m?m.refs:[]).forEach(function(p){if((p._dm.agg||'')>((nuovo&&nuovo.agg)||c.agg||''))nuovo=p._dm;});
-      if(nuovo){LOC.forEach(function(k){if(k!=='placeId'&&nuovo[k]!=null)n[k]=nuovo[k];});n.agg=nuovo.agg;}
+      if(nuovo){LOC.forEach(function(k){if(k!=='placeId'&&nuovo[k]!=null)n[k]=nuovo[k];});n.agg=nuovo.agg;if(!nuovo.posManuale)delete n.posManuale;}
       controlla(n,pid,m?m.refs:[]);
       if(chiaveScheda(n)!==chiaveScheda(c))scrivi.push({doc:c._id,c:n});
     });
@@ -998,6 +999,61 @@ function cercaLocale(testo,onPick){
 function scatolaLocale(pl,nota){return el('div',{cls:'placebox'},[el('b',{text:pl.displayName}),el('div',{text:pl.formattedAddress}),
   pl.businessStatus&&pl.businessStatus!=='OPERATIONAL'?el('div',{style:'color:var(--red);font-weight:700',text:'⚠ Google lo indica come chiuso'}):null,
   nota?el('div',{style:'margin-top:4px;font-weight:700',text:nota}):null]);}
+// 📍 POSIZIONE CORRETTA A MANO (27/11): quando Google ha il punto sbagliato o il locale su Google non c'e'.
+// Si cerca l'indirizzo (via e civico) e/o si tocca la mappa / si trascina il pallino. Si salva nel campo nascosto
+// dei contatti con "posManuale": pallino, "Naviga" e il giro di DeliverySync usano queste coordinate; lo script del
+// cloud non le cambia (tocca i dati per la mappa solo dei clienti nuovi). Scegliendo di nuovo un locale di Google
+// in Modifica la correzione si toglie.
+function linkCoord(lat,lng){return 'https://www.google.com/maps/search/?api=1&query='+(+lat).toFixed(6)+','+(+lng).toFixed(6);}
+function linkNaviga(c){
+  if(c.posManuale&&c.lat!=null)return 'https://www.google.com/maps/dir/?api=1&destination='+(+c.lat).toFixed(6)+','+(+c.lng).toFixed(6);
+  return 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(c.indirizzo||'')+'&destination_place_id='+encodeURIComponent(c.placeId||c.id);}
+// campi della mappa con la posizione nuova (pos = {lat,lng,indirizzo,pl}); comune e provincia dall'indirizzo trovato
+function datiPos(pos,prima){var o={lat:pos.lat,lng:pos.lng,indirizzo:pos.indirizzo||prima.indirizzo||'',maps:linkCoord(pos.lat,pos.lng),posManuale:true};
+  if(pos.pl){var cm=comuneDi(pos.pl),pr=comp(pos.pl,'administrative_area_level_2').shortText;if(cm)o.comune=cm;if(pr)o.provincia=pr;}return o;}
+// nel contatto: link Maps al punto giusto (gli altri link restano) e, se e' stato trovato un indirizzo, l'indirizzo di lavoro
+function contattoPos(p,pos){var ur=(p.urls||[]).filter(function(u){return !RX_MAPS.test(u.value||'');}).map(function(u){var o={value:u.value};if(u.type)o.type=u.type;return o;});
+  ur.push({value:linkCoord(pos.lat,pos.lng),type:'work'});var o={urls:ur};if(pos.pl)o.addresses=indirizzoLink(p,pos.pl).addresses;return o;}
+function correggiPosizione(c,onPos){
+  var st={token:null,timer:null,mappa:null,pin:null,pl:null},centro=c.lat!=null?{lat:+c.lat,lng:+c.lng}:{lat:45.55,lng:11.55};
+  var q=el('input',{cls:'fi sm',placeholder:'Indirizzo giusto: via, civico e comune',autocomplete:'off'}),sugg=el('div',{});
+  var dove=el('div',{style:'height:240px;border-radius:12px;margin-top:8px;background:#e5e7eb'}),stato=el('div',{cls:'msub',style:'margin:6px 0 0;font-weight:700'});
+  var pannello=el('div',{style:'display:none;margin-top:8px'},[q,sugg,dove,
+    el('div',{cls:'msub',style:'margin:6px 0 0',text:'Tocca la mappa o trascina il pallino rosso nel punto esatto del locale.'}),stato]);
+  function qui(){var p=st.pin.position;return {lat:typeof p.lat==='function'?p.lat():p.lat,lng:typeof p.lng==='function'?p.lng():p.lng};}
+  function avvisa(){st.mosso=true;var ll=qui(),ind=st.pl?(st.pl.formattedAddress||''):(q.value.trim()||c.indirizzo||'');
+    stato.textContent='📍 Nuova posizione: '+(ind||(ll.lat.toFixed(5)+', '+ll.lng.toFixed(5)))+'. Si salva con "Salva" qui sotto.';
+    onPos({lat:ll.lat,lng:ll.lng,indirizzo:ind,pl:st.pl});}
+  function sposta(ll,zoom){st.pin.position=ll;st.mappa.panTo(ll);if(zoom)st.mappa.setZoom(zoom);avvisa();}
+  function apriMappa(){if(st.mappa)return Promise.resolve();
+    return loadMaps().then(function(){return Promise.all([google.maps.importLibrary('maps'),google.maps.importLibrary('marker')]);}).then(function(){
+      st.mappa=new google.maps.Map(dove,{center:centro,zoom:c.lat!=null?17:9,mapId:window.MAPS_MAP_ID||'DEMO_MAP_ID',gestureHandling:'cooperative',
+        streetViewControl:false,mapTypeControl:false,fullscreenControl:false,clickableIcons:false});
+      st.pin=new google.maps.marker.AdvancedMarkerElement({map:st.mappa,position:centro,gmpDraggable:true,title:'Trascinami nel punto giusto',
+        content:new google.maps.marker.PinElement({background:'#dc2626',borderColor:'#ffffff',glyphColor:'#ffffff',scale:1.2}).element});
+      st.pin.addListener('dragend',function(){st.mappa.panTo(qui());avvisa();});
+      st.mappa.addListener('click',function(e){if(e.latLng)sposta(e.latLng.toJSON());});});}
+  function cerca(t,tipi){google.maps.importLibrary('places').then(function(P){if(!st.token)st.token=new P.AutocompleteSessionToken();
+      var req={input:t,sessionToken:st.token,language:'it',region:'it',locationBias:{center:centro,radius:50000}};
+      if(tipi)req.includedPrimaryTypes=['street_address','premise','subpremise','route'];
+      return P.AutocompleteSuggestion.fetchAutocompleteSuggestions(req);})
+    .then(function(r){var list=(r.suggestions||[]).filter(function(s){return s.placePrediction;}).slice(0,6);
+      if(!list.length&&tipi)return cerca(t,false);  // niente indirizzi: si prova senza filtro
+      sugg.innerHTML='';
+      if(!list.length){sugg.appendChild(el('div',{cls:'msub',style:'margin-top:6px',text:'Indirizzo non trovato: tocca la mappa nel punto giusto.'}));return;}
+      sugg.appendChild(el('div',{cls:'sugg'},list.map(function(s){var p=s.placePrediction;
+        return el('button',{type:'button',onclick:function(){var pl=p.toPlace();st.token=null;
+          pl.fetchFields({fields:['displayName','formattedAddress','location','addressComponents']})
+            .then(function(){sugg.innerHTML='';st.pl=pl;if(pl.formattedAddress)q.value=pl.formattedAddress;return apriMappa().then(function(){sposta(pl.location.toJSON(),18);});})
+            .catch(function(e){sugg.innerHTML='';sugg.appendChild(el('div',{cls:'ferr',text:'Indirizzo non disponibile: '+e.message}));});}},
+          [(p.mainText||p.text).text,el('small',{text:p.secondaryText?p.secondaryText.text:''})]);})));})
+    .catch(function(e){if(tipi)return cerca(t,false);sugg.innerHTML='';sugg.appendChild(el('div',{cls:'ferr',text:'Ricerca non riuscita: '+e.message}));});}
+  q.addEventListener('input',function(){st.pl=null;if(st.mosso)avvisa();clearTimeout(st.timer);var t=q.value.trim();if(t.length<4){sugg.innerHTML='';return;}st.timer=setTimeout(function(){cerca(t,true);},350);});
+  var btn=el('button',{cls:'act',type:'button',style:'width:100%;justify-content:center;margin-top:8px',text:'📍 Correggi la posizione a mano',onclick:function(){
+    pannello.style.display='block';btn.style.display='none';apriMappa().catch(function(e){stato.textContent='Mappa non disponibile: '+e.message;});}});
+  var box=el('div',{},[btn,pannello]);
+  box.azzera=function(){st.pl=null;st.mosso=false;q.value='';sugg.innerHTML='';stato.textContent='';pannello.style.display='none';btn.style.display='';onPos(null);};
+  return box;}
 
 // Modifica con piu' referenti dello stesso locale: ognuno tiene i suoi prodotti/sigilli/note, si applicano solo
 // le differenze scelte nel modulo (aggiunto / tolto / omaggio cambiato / pezzi di "Altro" aggiunti o tolti)
@@ -1059,7 +1115,8 @@ function formModifica(c,miei,gs){
   var omg=el('button',{cls:'chip'+(v.omaggio?' on':''),type:'button',text:'🎁 Omaggio',onclick:function(){v.omaggio=!v.omaggio;omg.classList.toggle('on',v.omaggio);}});
   var fAltro=el('textarea',{cls:'fi sm',rows:'2',placeholder:'note libere'});fAltro.value=altro.join(' / ');
   var fAz=campo('Ragione sociale',org.az),fPiva=campo('P.IVA',org.piva),fSdi=campo('SDI',org.sdi);
-  var cerca=cercaLocale('',function(pl){st.place=pl;zonaImposta(zsel,zonaPer(pl));
+  var posBox=correggiPosizione(c,function(x){st.pos=x;if(x&&st.place){st.place=null;box.innerHTML='';}});
+  var cerca=cercaLocale('',function(pl){st.place=pl;if(st.pos)posBox.azzera();zonaImposta(zsel,zonaPer(pl));
     var gia=S.clients.find(function(x){return x._id!==c._id&&(x.placeId||x.id)===pl.id;});
     box.innerHTML='';box.appendChild(scatolaLocale(pl,gia?'Già sulla mappa come "'+gia.locale+'": i referenti verranno uniti in quella scheda.':''));});
   var save=el('button',{cls:'sbtn',style:'background:var(--orange);color:#fff;width:100%;margin-top:16px',text:'Salva in rubrica e sulla mappa'});
@@ -1077,13 +1134,15 @@ function formModifica(c,miei,gs){
         el('div',{cls:'flbl',text:'Ragione sociale · P.IVA · SDI'}),fAz,el('div',{style:'display:flex;gap:8px;margin-top:6px'},[fPiva,fSdi])]):null,
       el('div',{cls:'flbl',text:'Nome del locale (titolo della scheda)'}),fLocale,
       el('div',{cls:'flbl',text:'Locale su Google Maps — ora: '+(c.nomeGoogle||c.locale)+', '+(c.indirizzo||'')}),
-      el('div',{cls:'msub',style:'margin:0 0 6px',text:'Solo se l\'indirizzo è sbagliato: cerca il locale giusto.'}),cerca,box,
+      el('div',{cls:'msub',style:'margin:0 0 6px',text:c.posManuale?'📍 Ora la posizione è corretta a mano. Se scegli qui un locale di Google, si torna alla posizione di Google.':'Solo se l\'indirizzo è sbagliato: cerca il locale giusto.'}),cerca,box,
+      el('div',{cls:'msub',style:'margin:10px 0 0',text:'Se su Google il locale non c\'è, o il punto è sbagliato anche col locale giusto:'}),posBox,
       el('div',{cls:'flbl',text:'Zona'}),zsel,
       err,save,miei.length?el('button',{cls:'act',type:'button',style:'width:100%;justify-content:center;margin-top:14px;color:var(--red)',text:'🚫 Non è più cliente',onclick:function(e){exCliente(c,miei,gs,e.currentTarget);}}):null,
       miei.length?el('button',{cls:'act',type:'button',style:'width:100%;justify-content:center;margin-top:8px;color:var(--red)',text:'🗑️ Elimina definitivamente',onclick:function(e){eliminaDefinitivo(c,miei,e.currentTarget);}}):null])]);
   save.addEventListener('click',function(){
     err.textContent='';var ora=oraIso(),pid=c.placeId||c.id,locale=fLocale.value.trim()||c.locale,zona=zsel.value,pl=st.place;
-    var cambiaLoc=!!pl&&pl.id!==pid,cambiaZona=zona!==c.zona,cambiaNome=locale!==c.locale;
+    var cambiaLoc=!!pl&&(pl.id!==pid||!!c.posManuale),cambiaZona=zona!==c.zona,cambiaNome=locale!==c.locale;
+    var pos=cambiaLoc?null:st.pos,cambiaPos=!!pos;  // 📍 posizione corretta a mano (scegliere un locale di Google la toglie)
     if(v.omaggio&&!Object.keys(v.sig).some(function(x){return v.sig[x];})){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
     var dif=modificheScelte(v,v0,altro0,fAltro.value.trim());dif.unico=miei.length===1;
     var orgNuova=orgNorm({az:fAz.value,piva:fPiva.value,sdi:fSdi.value}),orgPrima=orgNorm(org),cambiaOrg=JSON.stringify(orgNuova)!==JSON.stringify(orgPrima);
@@ -1096,18 +1155,21 @@ function formModifica(c,miei,gs){
         var tit=orgNuova.piva?'P.IVA '+orgNuova.piva:((o.title||'')&&!/\d{6,}/.test(o.title)?o.title:'');
         var nuovaO={name:orgNuova.az,title:tit,department:orgNuova.sdi?'SDI '+orgNuova.sdi:'',type:o.type||'work'};
         body.organizations=(nuovaO.name||nuovaO.title||nuovaO.department?[nuovaO]:[]).concat(resto);campi.push('organizations');}
-      if(cambiaLoc||cambiaZona||cambiaNome){var vecchio=cdato(p,'framezzino')||{};
+      if(cambiaLoc||cambiaZona||cambiaNome||cambiaPos){var vecchio=cdato(p,'framezzino')||{};
         var d=Object.assign({placeId:pid},vecchio.senzaMappa?{}:vecchio);LOC.forEach(function(k){if(d[k]==null&&c[k]!=null)d[k]=c[k];});
-        if(dmNuovo)Object.assign(d,dmNuovo);d.zona=zona;d.locale=locale;if(cambiaLoc||cambiaZona)d.agg=ora;
+        if(dmNuovo){Object.assign(d,dmNuovo);delete d.posManuale;}if(cambiaPos)Object.assign(d,datiPos(pos,d));
+        d.zona=zona;d.locale=locale;if(cambiaLoc||cambiaZona||cambiaPos)d.agg=ora;
         body.clientData=conDati(p,d,cambiaZona?decidereDopo(p,zona):cdato(p,'framezzino_decidere'));campi.push('clientData');}
       if(cambiaLoc){var il=indirizzoLink(p,pl);body.addresses=il.addresses;body.urls=il.urls;campi.push('addresses','urls');}
+      if(cambiaPos){var ip=contattoPos(p,pos);body.urls=ip.urls;campi.push('urls');if(ip.addresses){body.addresses=ip.addresses;campi.push('addresses');}}
       var passo=campi.length?contattoAggiorna(p,body,campi.join(',')):Promise.resolve(p);
       return passo.then(function(np){return (cambiaZona?gruppiZona(np,zona,gs):Promise.resolve()).then(function(){fatti[np.resourceName]=np;return fatti;});});
     });},Promise.resolve({})).then(function(fatti){
       var refs=(c.referenti||[]).map(function(r){var np=null;rnsRef(r).some(function(k){np=fatti[k];return !!np;});return np?referenteDa(np,r.rubrica||rubricaMia()||'',r):r;});
       var n=ricomponi(c,refs,null),dest=c._id;n.locale=locale;n.zona=zona;
-      if(dmNuovo){LOC.forEach(function(k){if(k!=='zona')n[k]=dmNuovo[k];});n.id=dmNuovo.placeId;n.maps=pl.googleMapsURI||dmNuovo.maps;}
-      if(cambiaLoc||cambiaZona)n.agg=ora;
+      if(dmNuovo){LOC.forEach(function(k){if(k!=='zona')n[k]=dmNuovo[k];});n.id=dmNuovo.placeId;n.maps=pl.googleMapsURI||dmNuovo.maps;delete n.posManuale;}
+      if(cambiaPos)Object.assign(n,datiPos(pos,n));
+      if(cambiaLoc||cambiaZona||cambiaPos)n.agg=ora;
       if(cambiaLoc){var ex=[pid].concat(c.ex||[]);n.ex=ex.filter(function(x,i){return x!==n.placeId&&ex.indexOf(x)===i;});
         var t=S.clients.find(function(x){return x._id!==c._id&&(x.placeId||x.id)===n.placeId;});
         if(t){var m=ricomponi(t,(t.referenti||[]).concat(n.referenti),null),ex2=(t.ex||[]).concat(n.ex);
