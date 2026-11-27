@@ -45,9 +45,9 @@ function el(tag,a,kids){var e=document.createElement(tag);if(a)for(var k in a){v
   (kids||[]).forEach(function(c){if(c!=null)e.appendChild(typeof c==='string'?document.createTextNode(c):c);});return e;}
 function show(id){['login','crypto'].forEach(function(p){document.getElementById(p).classList.toggle('show',p===id);});document.getElementById('app').classList.toggle('show',id==='app');document.getElementById('loader').style.display='none';}
 function norm(s){return (s||'').toString().normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();}
-// NOME DEL REFERENTE (27/11, Jacopo: in "L'Ingrediente Segreto" si vedeva "Referente" invece di "Milena"). Se la scheda non ha
+// NOME DEL REFERENTE (27/11, Jacopo: su una scheda si vedeva "Referente" invece del nome della persona). Se la scheda non ha
 // il nome della persona, o il nome non c'e' piu' nel contatto (rinominato), si prende dal contatto in rubrica: le parole in fondo
-// dopo il nome del locale ("Tram Vicenza Bar L'Ingrediente Segreto Milena" -> "Milena"). Solo se sembra un nome di persona
+// dopo il nome del locale ("Tram Schio Bar Roma Luca" -> "Luca"). Solo se sembra un nome di persona
 // (1-4 parole di sole lettere, niente ditte, prodotti, email, numeri): altrimenti resta "Referente" (il nome intero e' scritto sotto).
 var REF_GENERICHE=['bar','caffe','cafe','caffetteria','pub','bistrot','bistro','ristorante','pizzeria','pasticceria','gelateria','osteria','hostaria',
   'trattoria','panificio','tabacchi','tabaccheria','distributore','distr','eni','enilive','q8','esso','snack','birreria','enoteca','hotel','albergo',
