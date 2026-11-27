@@ -719,19 +719,98 @@ function leggiRubrica(){
     +(tok?'&pageToken='+encodeURIComponent(tok):'')).then(function(r){all=all.concat(r.connections||[]);return r.nextPageToken?page(r.nextPageToken):all;});}
   return page(null).then(function(cs){return papi('contactGroups?pageSize=1000&groupFields=name,groupType').then(function(g){return [cs,g.contactGroups||[]];});});
 }
+// ── CLIENTI NUOVI "IN LAVORAZIONE" (28/11) ─────────────────────────────────────────────────────────────
+// L'elenco dei contatti di Google arriva con qualche minuto di ritardo (27/11): subito dopo il 🔄 un cliente salvato da
+// poco dal telefono puo' esserci ancora senza i dati per la mappa che lo script ha appena scritto, o mancare del tutto
+// (anche allo script nel cloud). I contatti "Tram" o del gruppo dei clienti senza pallino (non ex, non "Da decidere",
+// non "senza locale") si rileggono uno per uno: quella lettura e' subito aggiornata. Quelli ancora da sistemare e
+// cambiati nell'ultima ora sono "in lavorazione": dopo un 🔄 l'app ricontrolla da sola dopo 1 e dopo 3 minuti e, se ce
+// ne sono ancora, rifa' il giro dello script nel cloud (al massimo 2 volte per 🔄).
+var RX_TRAM=/^\s*(tram|tam)\b/i,LAV={timer:null,passi:[],giri:0,gen:0,attivo:false};
+function inGruppo(p,g){return !!g&&(p.memberships||[]).some(function(m){return m.contactGroupMembership&&m.contactGroupMembership.contactGroupResourceName===g;});}
+function senzaPallino(p,gid,exGid){
+  var nm=(((p.names||[])[0]||{}).displayName)||'',inGr=inGruppo(p,gid),dm=cdato(p,'framezzino');
+  if(!(RX_TRAM.test(nm)||inGr)||inGruppo(p,exGid)||cdato(p,'framezzino_decidere')||(dm&&dm.senzaMappa))return false;
+  return !(inGr&&dm&&dm.placeId);}
+function esitoNuovo(p,gid,exGid){var dm=cdato(p,'framezzino');
+  if(cdato(p,'framezzino_decidere'))return 'decidere';if(inGruppo(p,exGid))return 'ex';if(dm&&dm.senzaMappa)return 'senza';
+  return inGruppo(p,gid)&&dm&&dm.placeId?'mappa':'';}
+function rileggiNuovi(r){
+  var contacts=r[0],gruppi=r[1]||[],gid=(gruppi.find(function(g){return g.name==='Clienti Framezzino';})||{}).resourceName,
+    exGid=(gruppi.find(function(g){return g.name===EX_GRUPPO;})||{}).resourceName,ora=Date.now(),elim=SY.eliminati||{},prima={};
+  (SY.lavorazione||[]).forEach(function(x){prima[x.rn]=1;});
+  function via(rn){var e=elim[rn];return e&&ora-e<9e5;}  // cancellato dall'app da poco: l'elenco puo' mostrarlo ancora
+  var da=contacts.filter(function(p){return !via(p.resourceName)&&(prima[p.resourceName]||senzaPallino(p,gid,exGid));})
+    .sort(function(a,b){return aggiornatoIl(b).localeCompare(aggiornatoIl(a));}).slice(0,10);  // i piu' recenti, al massimo 10
+  var spariti={};
+  var letti=!da.length?Promise.resolve({}):papi('people:batchGet?personFields='+PF+da.map(function(p){return '&resourceNames='+encodeURIComponent(p.resourceName);}).join(''))
+    .then(function(x){var o={};(x.responses||[]).forEach(function(y){
+        if(y.person&&y.person.resourceName){o[y.person.resourceName]=y.person;if(y.requestedResourceName)o[y.requestedResourceName]=y.person;}
+        else if(y.requestedResourceName&&(y.httpStatusCode===404||(y.status&&y.status.code===5)))spariti[y.requestedResourceName]=1;});return o;})
+    .catch(function(e){console.warn('rilettura dei clienti nuovi',e);return {};});
+  return letti.then(function(o){
+    contacts=contacts.map(function(p){var f=o[p.resourceName];return f&&aggiornatoIl(f)>=aggiornatoIl(p)?f:p;});
+    var esiti={},lav=contacts.filter(function(p){var rn=p.resourceName,t=Date.parse(aggiornatoIl(p));
+      if(prima[rn])esiti[rn]=spariti[rn]||via(rn)?'via':esitoNuovo(p,gid,exGid);
+      return !spariti[rn]&&!via(rn)&&t&&ora-t<36e5&&senzaPallino(p,gid,exGid);})
+      .map(function(p){return {nome:(((p.names||[])[0]||{}).displayName)||'',rn:p.resourceName};});
+    Object.keys(prima).forEach(function(rn){if(!esiti[rn])esiti[rn]='via';});
+    return [contacts,gruppi,lav,esiti];});
+}
+function accountMio(){var mia=(SY.rubrica||(function(){try{return localStorage.getItem('fn_rubrica')||'';}catch(e){return '';}})()).toLowerCase();
+  return mia==='jacopo'||mia==='marco'?mia:'entrambi';}
+// dopo un 🔄: ricontrollo da solo dopo 1 minuto e poi dopo altri 2 (un 🔄 nuovo ricomincia da capo)
+function programmaRiletture(){clearTimeout(LAV.timer);LAV.gen++;LAV.passi=[6e4,12e4];LAV.giri=0;LAV.attivo=true;
+  var g=LAV.gen;LAV.timer=setTimeout(function(){rileggiDaSola(g);},LAV.passi.shift());}
+function nomeNuovo(x){return '«'+(x.nome||'cliente nuovo')+'»';}
+function rileggiDaSola(g){
+  if(g!==LAV.gen)return;
+  if(!(gTok&&gTok.exp>Date.now()+60000)){LAV.attivo=false;return;}  // accesso Google scaduto: niente finestre senza un tocco
+  if(SY.running){LAV.timer=setTimeout(function(){rileggiDaSola(g);},2e4);return;}  // un altro aggiornamento in corso: aspetto
+  var prima=(SY.lavorazione||[]).slice();
+  return aggiornaDaRubrica(false,true).then(function(ok){
+    var lv=SY.lavorazione||[];
+    lv.forEach(function(x){if(!prima.some(function(y){return y.rn===x.rn;}))prima.push(x);});  // anche quelli visti solo adesso
+    if(!ok||!lv.length||LAV.giri>=2||g!==LAV.gen||/[?&]prova\b/.test(location.search))return;
+    return ghToken().then(function(t){if(!t||SY.running||g!==LAV.gen)return;LAV.giri++;
+      SY.running=true;SY.fase='script';segnaSync();
+      toast((lv.length===1?nomeNuovo(lv[0])+' non è':lv.length+' clienti nuovi non sono')+' ancora sulla mappa: rifaccio il giro nel cloud… (circa 1 minuto)');
+      return lanciaScript(accountMio()).catch(function(e){toast(e.message,true);})
+        .then(function(){SY.running=false;SY.fase='';segnaSync();return aggiornaDaRubrica(false,true);});});
+  }).then(function(){
+    if(g!==LAV.gen)return;
+    var ora=SY.lavorazione||[],resta={},es=SY.esitiNuovi||{};ora.forEach(function(x){resta[x.rn]=1;});
+    var fatti=prima.filter(function(x){return !resta[x.rn];});
+    var dec=fatti.filter(function(x){return es[x.rn]==='decidere';}),map=fatti.filter(function(x){return es[x.rn]==='mappa';});
+    if(dec.length)toast((dec.length===1?nomeNuovo(dec[0]):dec.length+' clienti nuovi')+': lo script non ha saputo sistemarlo da solo → 🔄 «Da decidere»',true);
+    else if(map.length)toast(map.length===1?nomeNuovo(map[0])+' ora è sulla mappa ✓':map.length+' clienti nuovi ora sono sulla mappa ✓');
+    var ms=LAV.passi.shift();
+    if(ms!=null){LAV.timer=setTimeout(function(){rileggiDaSola(g);},ms);return;}
+    LAV.attivo=false;
+    if(ora.length)toast((ora.length===1?nomeNuovo(ora[0])+' non è':ora.length+' clienti nuovi non sono')+' ancora sulla mappa: riprova 🔄 tra qualche minuto. Se resta così, avvisa Claude.',true);
+  });
+}
+// nel pannello del 🔄: i clienti nuovi in lavorazione
+function boxLavorazione(){var l=SY.lavorazione||[];if(!l.length)return null;
+  return el('div',{},[el('div',{cls:'sec',style:'margin-top:16px',text:'Clienti nuovi in lavorazione ('+l.length+')'}),
+    el('div',{},l.map(function(x){return el('div',{cls:'ref'},[el('div',{cls:'refn',text:x.nome||'(senza nome)'}),
+      el('div',{cls:'acts'},[el('a',{cls:'act',href:'https://contacts.google.com/person/'+x.rn.split('/').pop(),target:'_blank',rel:'noopener',text:'✏️ Apri in Google Contatti'})])]);})),
+    el('p',{cls:'msub',style:'margin-top:8px',text:'Salvati da poco in rubrica: lo script nel cloud non li ha ancora messi sulla mappa (Google mostra i contatti nuovi con qualche minuto di ritardo). '+
+      (LAV.attivo?'L\'app li ricontrolla da sola e, se serve, rifà il giro nel cloud: tienila aperta.':'Tocca «Sistema la rubrica e aggiorna la mappa».')})]);}
 // Locale e zona cambiati DOPO (dall'app o da Claude): vince la modifica piu' recente. Il campo "agg" (data e ora)
 // sta nella scheda e nel campo nascosto dei contatti. Se il contatto e' piu' recente la scheda prende il suo locale/zona;
 // se la scheda e' piu' recente (cambiata dall'altra rubrica) il contatto si allinea: campo nascosto e gruppo della zona.
 // "ex" nella scheda = locali Google di prima (locale cambiato dall'app): i contatti con il locale vecchio ci finiscono dentro.
 // "posManuale" (27/11): posizione corretta a mano (Modifica -> 📍 Correggi la posizione), segue lat/lng
 var LOC=['placeId','nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona','posManuale'];
-function aggiornaDaRubrica(daTocco){
-  if(SY.running)return;
+function aggiornaDaRubrica(daTocco,rilettura){  // rilettura = ricontrollo da solo dopo un 🔄 (28/11): senza avvisi ripetuti
+  if(SY.running)return Promise.resolve(false);
   // con la sola copia del telefono (senza rete o appena aperta) la mappa potrebbe essere vecchia: non si riscrive niente
-  if(S.daCache||!navigator.onLine){if(daTocco)toast('Aspetto di essere collegato a internet per aggiornare la mappa: riprova tra poco.',true);return;}SY.running=true;segnaSync();
-  var gruppi=[];
-  googleToken().then(leggiRubrica).then(function(r){
+  if(S.daCache||!navigator.onLine){if(daTocco)toast('Aspetto di essere collegato a internet per aggiornare la mappa: riprova tra poco.',true);return Promise.resolve(false);}SY.running=true;segnaSync();
+  var gruppi=[],lav=[],lavRn={};
+  return googleToken().then(leggiRubrica).then(rileggiNuovi).then(function(r){
     var contacts=r[0];gruppi=r[1]||[];var gid=(gruppi.find(function(g){return g.name==='Clienti Framezzino';})||{}).resourceName;
+    lav=r[2]||[];lav.forEach(function(x){lavRn[x.rn]=1;});var esitiNuovi=r[3]||{};  // clienti nuovi in lavorazione (28/11)
     // contatti cambiati o cancellati dall'app negli ultimi 15 minuti: l'elenco di Google li mostra in ritardo (27/11),
     // quindi si usa la versione letta subito dopo la modifica e si saltano quelli appena cancellati
     var ora=Date.now(),fr=SY.freschi||{},elim=SY.eliminati||{};
@@ -758,7 +837,8 @@ function aggiornaDaRubrica(daTocco){
         if(inEx){var dx=cdato(p,'framezzino');if(dx&&dx.placeId&&!dx.senzaMappa)(exMiei[dx.placeId]=exMiei[dx.placeId]||{dm:dx,refs:[]}).refs.push(p);}
         return;}
       var dm=cdato(p,'framezzino');
-      if(!dm||dm.senzaMappa||!dm.placeId){senza++;senzaLista.push({nome:nm,rn:p.resourceName,tel:(p.phoneNumbers||[]).map(function(t){return fmtPhone(t.value);}).filter(function(v,i,a){return v&&a.indexOf(v)===i;})});return;}
+      if(!dm||dm.senzaMappa||!dm.placeId){if(lavRn[p.resourceName])return;  // cliente nuovo in lavorazione: non e' "senza locale"
+        senza++;senzaLista.push({nome:nm,rn:p.resourceName,tel:(p.phoneNumbers||[]).map(function(t){return fmtPhone(t.value);}).filter(function(v,i,a){return v&&a.indexOf(v)===i;})});return;}
       var pid=dm.placeId,t=exDi[pid];
       if(t&&(dm.agg||'')<=(t.agg||''))pid=t.placeId||t.id;  // locale cambiato dall'app: va nella scheda nuova
       p._dm=dm;
@@ -805,7 +885,7 @@ function aggiornaDaRubrica(daTocco){
       return n;});
     // confronto con quello che e' davvero salvato (non con quello che si vede: dopo "Ripristina" l'ex sparisce subito)
     var exCambiati=!S.exLeggibile||S.exSalvato!==canonico(exCards);
-    SY.decidere=decidere;SY.senza=senza;SY.senzaLista=senzaLista;SY.exLista=exLista;SY.quando=new Date();
+    SY.decidere=decidere;SY.senza=senza;SY.senzaLista=senzaLista;SY.exLista=exLista;SY.quando=new Date();SY.lavorazione=lav;SY.esitiNuovi=esitiNuovi;
     // freni di sicurezza: se qualcosa non torna non si tocca la mappa
     var conCampo=contacts.filter(function(p){return cdato(p,'framezzino');}).length,mie=S.clients.filter(function(c){return (c.referenti||[]).some(function(x){return x.rubrica===rubrica;});}).length;
     if(!conCampo)throw new Error('In questa rubrica nessun cliente ha ancora i dati per la mappa: la mappa non è stata toccata. (Avvisa Claude)');
@@ -831,10 +911,15 @@ function aggiornaDaRubrica(daTocco){
     try{localStorage.setItem('fn_sync_'+(SY.rubrica||''),String(Date.now()));localStorage.setItem('fn_rubrica',SY.rubrica||'');localStorage.setItem('fn_dd_n',String(SY.decidere.length));}catch(e){}
     if(!/[?&]prova\b/.test(location.search))db.collection('network_meta').doc('aggiornamento').set({quando:new Date().toISOString(),chi:SY.rubrica||''}).catch(function(){});
     SY.running=false;segnaSync();
-    if(daTocco||n[0]||n[1]||n[2]||n[3])toast('Mappa aggiornata dalla rubrica ✓'+(n[0]?' · '+n[0]+' locali aggiornati':'')+(n[1]?' · '+n[1]+' tolti':'')+(n[2]?' · '+n[2]+' contatti allineati':'')+(n[3]?' · ex clienti aggiornati':'')+(!n[0]&&!n[1]&&!n[2]&&!n[3]?' · niente da cambiare':''));
+    var lv=(SY.lavorazione||[]).length,tl=lv===1?'1 cliente nuovo in lavorazione':lv+' clienti nuovi in lavorazione';
+    if(daTocco||n[0]||n[1]||n[2]||n[3])toast('Mappa aggiornata dalla rubrica ✓'+(n[0]?' · '+n[0]+' locali aggiornati':'')+(n[1]?' · '+n[1]+' tolti':'')+(n[2]?' · '+n[2]+' contatti allineati':'')+(n[3]?' · ex clienti aggiornati':'')+(!n[0]&&!n[1]&&!n[2]&&!n[3]&&!lv?' · niente da cambiare':'')
+      +(daTocco&&lv?' · '+tl+': ricontrollo da solo tra 1 minuto (tieni aperta l\'app)':''));
     applyFilters();
-    if(SY.decidere.length&&!daTocco)toast(SY.decidere.length+(SY.decidere.length===1?' contatto da decidere':' contatti da decidere')+': tocca 🔄');
-  }).catch(function(e){SY.running=false;segnaSync();if(daTocco||!/Accesso Google non ancora/.test(e.message))toast(e.message,true);});
+    if(daTocco)programmaRiletture();  // dopo 1 e dopo 3 minuti rilegge da sola (clienti appena salvati, 28/11)
+    else if(!rilettura&&lv)toast(tl+': tocca 🔄 → «Sistema la rubrica e aggiorna la mappa»');
+    else if(!rilettura&&SY.decidere.length)toast(SY.decidere.length+(SY.decidere.length===1?' contatto da decidere':' contatti da decidere')+': tocca 🔄');
+    return true;
+  }).catch(function(e){SY.running=false;segnaSync();if(daTocco||!/Accesso Google non ancora/.test(e.message))toast(e.message,true);return false;});
 }
 // contatti di questa rubrica da allineare alla scheda (locale/zona cambiati dall'altra rubrica): campo nascosto + gruppo zona
 function allineaRubrica(lista,gruppi){var k=0;
@@ -877,8 +962,7 @@ function lanciaScript(account,senzaFreno){
 // 🔄 dal pannello: accesso Google (finestra dal tocco), script nel cloud per la MIA rubrica, poi mappa dalla rubrica
 function sistemaEAggiorna(){
   if(SY.running)return;
-  var mia=(SY.rubrica||(function(){try{return localStorage.getItem('fn_rubrica')||'';}catch(e){return '';}})()).toLowerCase();
-  var account=mia==='jacopo'||mia==='marco'?mia:'entrambi';
+  var account=accountMio();
   googleToken().then(ghToken).then(function(t){
     if(!t){toast('Script nel cloud non collegato: aggiorno solo la mappa (🔄 → Chiave GitHub per collegarlo).',true);return;}
     SY.running=true;SY.fase='script';segnaSync();
@@ -921,6 +1005,7 @@ function openSync(){
       el('div',{cls:'sec',style:'margin-top:16px',text:'Da decidere'+(SY.decidere.length?' ('+SY.decidere.length+')':'')}),
       SY.quando?(lista.length?el('div',{},lista):el('div',{cls:'msub',text:'Niente da decidere ✓'})):el('div',{cls:'msub',text:'Aggiorna dalla rubrica per vedere i contatti da decidere.'}),
       lista.length?el('p',{cls:'msub',style:'margin-top:10px',text:'Sono clienti che lo script non ha saputo sistemare da solo (locale non trovato su Google, possibile doppione, zona da scegliere…). Con "📍 Sistema qui" scegli il locale (o "senza locale") e la zona: va in rubrica e sulla mappa. Possibile doppione: "elimina" se è lo stesso cliente, "sono diversi" se sono due clienti diversi. Oppure correggi il contatto in Google Contatti: al prossimo giro lo script lo riprova. Questi avvisi li vedete tutti e due.'}):null,
+      boxLavorazione(),
       SY.senza?el('button',{cls:'act',type:'button',style:'justify-content:flex-start;margin-top:12px;width:100%',text:'📦 '+SY.senza+(SY.senza===1?' cliente':' clienti')+' senza locale sulla mappa ›',onclick:function(){closeOv();openSenzaLocale();}}):null,
       (SY.exLista||[]).length?el('button',{cls:'act',type:'button',style:'justify-content:flex-start;margin-top:8px;width:100%',text:'🗂️ Ex clienti ('+SY.exLista.length+') ›',onclick:function(){closeOv();openExClienti();}}):null])]);
 }
@@ -1330,6 +1415,7 @@ var GUIDA=[
   ['Il 🔄 e i «Da decidere»',[
     'Il 🔄 legge la tua rubrica e aggiorna la mappa. Il numero rosso sul 🔄 = contatti da decidere; il pallino arancione = mappa non ancora aggiornata da quando hai aperto l\'app.',
     '«Sistema la rubrica e aggiorna la mappa» avvia lo script nel cloud (circa un minuto). Lo script gira anche da solo alle 6:37 e alle 13:23.',
+    'Cliente appena salvato dal telefono e non ancora sulla mappa («in lavorazione»): l\'app lo ricontrolla da sola dopo 1 e dopo 3 minuti e, se serve, rifà il giro nel cloud. Tieni aperta l\'app.',
     'Da decidere: 📍 Sistema qui (scegli il locale, o «Cliente senza locale»), 🗺️ Scegli la zona, possibile doppione → «È un doppione: elimina» oppure «Sono diversi», ✓ Va bene così. Li vedete tutti e due: basta che lo sistemi uno.',
     'Sotto il numero dei locali c\'è quando è stata aggiornata la mappa l\'ultima volta e da chi.']],
   ['Modificare, ex clienti, cancellare',[
