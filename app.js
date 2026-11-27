@@ -17,8 +17,12 @@ db.enablePersistence({synchronizeTabs:true}).catch(function(){});
 var CCOL=db.collection('network_clienti'), META=db.collection('network_meta').doc('cifratura');
 var SALT='FramezzinoNetwork-AES256-Salt-v1', CHECK='framezzino-network-ok';
 var ZCOL=['#f97316','#0ea5e9','#16a87a','#8b5cf6','#e11d48','#ca8a04','#0d9488','#db2777','#2563eb','#65a30d','#9333ea','#ea580c','#0891b2','#64748b','#b45309','#4f46e5'];
-var S={user:null,key:null,clients:[],filtered:[],sel:null,f:{zone:{},prod:{},sig:{},pag:{}},q:'',sort:'zona',me:null};
-var map=null,markers={},clusterer=null,unsub=null,unsubMeta=null,zoneColor={};
+var S={user:null,key:null,clients:[],filtered:[],sel:null,f:{zone:{},prod:{},sig:{},pag:{}},q:'',sort:'zona',me:null,
+  // EX CLIENTI SULLA MAPPA (27/11): schede degli ex clienti (documento cifrato network_meta/ex_clienti, rifatto dal 🔄),
+  // mostrate a richiesta: 'no' = nascosti, 'insieme' = con i clienti (pallini grigi), 'solo' = solo gli ex
+  ex:[],exF:[],exLeggibile:true,exMode:(function(){try{return localStorage.getItem('fn_exmode')||'no';}catch(e){return 'no';}})()};
+var map=null,markers={},clusterer=null,unsub=null,unsubMeta=null,unsubEx=null,zoneColor={};
+var EXDOC=db.collection('network_meta').doc('ex_clienti');
 
 // ── CIFRATURA AES-256-GCM (chiave non estraibile, salvata in IndexedDB) ───
 function deriveKey(pw){var enc=new TextEncoder();
@@ -102,6 +106,12 @@ function startApp(){
   show('app');initMap();loadGis().catch(function(){});
   // "aggiornata oggi alle ... · Marco": ultimo 🔄 andato a buon fine, di chiunque (documento network_meta/aggiornamento)
   if(unsubMeta)unsubMeta();unsubMeta=db.collection('network_meta').doc('aggiornamento').onSnapshot(function(d){S.ultimo=d.exists?d.data():null;mostraAggiornata();},function(){});
+  // ex clienti (27/11): schede cifrate in un documento solo; se non si decifra (password cambiata) si rifa' al 🔄
+  if(unsubEx)unsubEx();unsubEx=EXDOC.onSnapshot(function(d){var x=d.exists?d.data():null;
+    if(!x||!x.d){S.ex=[];S.exSalvato=canonico([]);S.exLeggibile=true;applyFilters();return;}
+    decD(x).then(function(o){var l=(o&&o.lista)||[];S.exSalvato=canonico(l);
+      S.ex=l.map(function(c){c._id='ex:'+(c.placeId||c.id);c._ex=true;return c;});S.exLeggibile=true;if(o&&o.__dn)finisciRekey([EXDOC]);applyFilters();},
+      function(){S.ex=[];S.exLeggibile=false;applyFilters();});},function(){});
   if(unsub)unsub();
   unsub=CCOL.onSnapshot({includeMetadataChanges:true},function(snap){
     var daFinire=[];
@@ -159,14 +169,16 @@ function initMap(){
   }).catch(function(e){mapMsg(e.message==='nokey'?'Manca la chiave Google Maps (config.js).':'Impossibile caricare Google Maps: '+e.message);});
 }
 function mapMsg(t){var m=document.getElementById('mapmsg');m.textContent=t;m.style.display='flex';}
-function pin(c){var col=zoneColor[c.zona]||'#f97316';
-  var pe=new google.maps.marker.PinElement({background:col,borderColor:'#ffffff',glyphColor:'#ffffff',scale:S.sel===c._id?1.25:1});return pe.element;}
+function pin(c){var col=c._ex?'#94a3b8':(zoneColor[c.zona]||'#f97316');  // ex cliente: grigio con scritto "ex"
+  var pe=new google.maps.marker.PinElement(Object.assign({background:col,borderColor:'#ffffff',glyphColor:'#ffffff',scale:S.sel===c._id?1.25:1},c._ex?{glyph:'ex'}:{}));return pe.element;}
+// cosa si vede (mappa ed elenco): i clienti filtrati, e gli ex clienti se scelto con il tasto "Ex clienti"
+function visibili(){return S.exMode==='solo'?S.exF:(S.exMode==='insieme'?S.filtered.concat(S.exF):S.filtered);}
 function renderMarkers(){
   if(!map||!google.maps.marker)return;
   if(clusterer)clusterer.clearMarkers();
   Object.keys(markers).forEach(function(k){markers[k].map=null;});markers={};
-  var arr=S.filtered.filter(function(c){return c.lat!=null;}).map(function(c){
-    var m=new google.maps.marker.AdvancedMarkerElement({position:{lat:c.lat,lng:c.lng},content:pin(c),title:c.locale});
+  var arr=visibili().filter(function(c){return c.lat!=null;}).map(function(c){
+    var m=new google.maps.marker.AdvancedMarkerElement({position:{lat:c.lat,lng:c.lng},content:pin(c),title:c.locale+(c._ex?' (ex cliente)':'')});
     m.addListener('click',function(){openDetail(c._id);});markers[c._id]=m;return m;});
   if(window.markerClusterer){
     clusterer=new markerClusterer.MarkerClusterer({map:map,markers:arr,renderer:{render:function(cl){
@@ -175,35 +187,53 @@ function renderMarkers(){
       return new google.maps.marker.AdvancedMarkerElement({position:cl.position,content:d,zIndex:1000+n});}}});
   }else arr.forEach(function(m){m.map=map;});
 }
-function fitAll(){if(!map||!S.filtered.length)return;var b=new google.maps.LatLngBounds();S.filtered.forEach(function(c){if(c.lat!=null)b.extend({lat:c.lat,lng:c.lng});});map.fitBounds(b,60);}
+function fitAll(){var v=visibili();if(!map||!v.length)return;var b=new google.maps.LatLngBounds();v.forEach(function(c){if(c.lat!=null)b.extend({lat:c.lat,lng:c.lng});});map.fitBounds(b,60);}
 
 // ── FILTRI E LISTA ────────────────────────────────────────────────────────
 function activeF(k){return Object.keys(S.f[k]).filter(function(x){return S.f[k][x];});}
 function matchesF(c,k,field){var a=activeF(k);if(!a.length)return true;var v=field==='zona'?[c.zona]:(c[field]||[]);return a.some(function(x){return v.indexOf(x)>=0;});}
+function passaFiltri(c,q){
+  if(!matchesF(c,'zone','zona')||!matchesF(c,'prod','prodotti')||!matchesF(c,'sig','sigilli')||!matchesF(c,'pag','pagamento'))return false;
+  if(q){var hay=norm([c.locale,c.nomeGoogle,c.comune,c.indirizzo,c.zona,c.azienda,c.piva,(c.referenti||[]).map(function(r){return r.nome+' '+r.contatto;}).join(' ')].join(' '));
+    if(q.split(/\s+/).some(function(t){return hay.indexOf(t)<0;}))return false;}
+  return true;}
 function applyFilters(refit){
   var q=norm(S.q).trim();
-  S.filtered=S.clients.filter(function(c){
-    if(!matchesF(c,'zone','zona')||!matchesF(c,'prod','prodotti')||!matchesF(c,'sig','sigilli')||!matchesF(c,'pag','pagamento'))return false;
-    if(q){var hay=norm([c.locale,c.nomeGoogle,c.comune,c.indirizzo,c.zona,c.azienda,c.piva,(c.referenti||[]).map(function(r){return r.nome+' '+r.contatto;}).join(' ')].join(' '));
-      if(q.split(/\s+/).some(function(t){return hay.indexOf(t)<0;}))return false;}
-    return true;});
+  S.filtered=S.clients.filter(function(c){return passaFiltri(c,q);});
+  S.exF=(S.ex||[]).filter(function(c){return passaFiltri(c,q);});
   var n=['zone','prod','sig','pag'].reduce(function(s,k){return s+activeF(k).length;},0);
   document.getElementById('fdot').classList.toggle('on',n>0);
-  renderList();renderMarkers();if(refit)fitAll();
+  segnaEx();renderList();renderMarkers();if(refit)fitAll();
 }
+// tasto "Ex clienti" sulla mappa (27/11): scelta tra nascosti / insieme ai clienti / solo gli ex
+function segnaEx(){var b=document.getElementById('exbtn');if(!b)return;var n=(S.ex||[]).length;
+  b.textContent=S.exMode==='solo'?'🗂️ Solo ex clienti ('+n+')':(S.exMode==='insieme'?'🗂️ Ex clienti: visibili ('+n+')':'🗂️ Ex clienti'+(n?' ('+n+')':''));
+  b.classList.toggle('on',S.exMode!=='no');}
+function openExMode(){
+  var n=(S.ex||[]).length;
+  function scelta(v,t,msg){return el('button',{cls:'act'+(S.exMode===v?' main':''),type:'button',style:'justify-content:flex-start;width:100%;margin-top:8px',text:(S.exMode===v?'✓ ':'')+t,
+    onclick:function(){S.exMode=v;try{localStorage.setItem('fn_exmode',v);}catch(e){}closeOv();applyFilters(true);toast(msg);}});}
+  openOv([testata('Ex clienti sulla mappa',n?(n+(n===1?' ex cliente con il locale':' ex clienti con il locale')):'Nessun ex cliente con il locale (si aggiornano con il 🔄)'),
+    el('div',{cls:'mbody'},[
+      scelta('no','Non mostrarli','Ex clienti nascosti'),
+      scelta('insieme','Mostrali insieme ai clienti (pallini grigi «ex»)','Ex clienti visibili insieme ai clienti (grigi)'),
+      scelta('solo','Mostra solo gli ex clienti','Solo gli ex clienti'),
+      el('p',{cls:'msub',style:'margin-top:12px',text:'Tocca un ex cliente per vederlo: da lì puoi rimetterlo cliente («↩ Ripristina come cliente») o eliminarlo. I filtri e la ricerca valgono anche per gli ex clienti.'})])]);}
 function dist(a,b){var R=6371,toR=Math.PI/180,dLa=(b.lat-a.lat)*toR,dLo=(b.lng-a.lng)*toR;var h=Math.sin(dLa/2)**2+Math.cos(a.lat*toR)*Math.cos(b.lat*toR)*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
 function renderList(){
-  var L=document.getElementById('list');L.innerHTML='';var arr=S.filtered.slice();
+  var L=document.getElementById('list');L.innerHTML='';var arr=visibili().slice();
   if(S.sort==='nome')arr.sort(function(a,b){return (a.locale||'').localeCompare(b.locale||'');});
   else if(S.sort==='vicino'&&S.me)arr.sort(function(a,b){return dist(S.me,a)-dist(S.me,b);});
   else arr.sort(function(a,b){return (a.zona+a.comune+a.locale).localeCompare(b.zona+b.comune+b.locale);});
-  document.getElementById('scount').textContent=arr.length+(arr.length===1?' locale':' locali')+(arr.length!==S.clients.length?' di '+S.clients.length:'');mostraAggiornata();
+  var nAtt=arr.filter(function(c){return !c._ex;}).length,nEx=arr.length-nAtt;
+  document.getElementById('scount').textContent=S.exMode==='solo'?nEx+(nEx===1?' ex cliente':' ex clienti')+(nEx!==S.ex.length?' di '+S.ex.length:'')
+    :nAtt+(nAtt===1?' locale':' locali')+(nAtt!==S.clients.length?' di '+S.clients.length:'')+(nEx?' + '+nEx+' ex':'');mostraAggiornata();
   arr.forEach(function(c){
     var refs=(c.referenti||[]).map(function(r){return r.nome;}).filter(Boolean).join(', ');
     var km=S.sort==='vicino'&&S.me?' · '+dist(S.me,c).toFixed(1)+' km':'';
-    L.appendChild(el('div',{cls:'row'+(S.sel===c._id?' sel':''),onclick:function(){openDetail(c._id,true);}},[
-      el('span',{cls:'zdot',style:'background:'+(zoneColor[c.zona]||'#f97316')}),
-      el('div',{style:'min-width:0'},[el('div',{cls:'rname',text:c.locale}),el('div',{cls:'rsub',text:(c.comune||'')+' · '+c.zona+km+(refs?' · '+refs:'')}),
+    L.appendChild(el('div',{cls:'row'+(S.sel===c._id?' sel':'')+(c._ex?' exrow':''),onclick:function(){openDetail(c._id,true);}},[
+      el('span',{cls:'zdot',style:'background:'+(c._ex?'#94a3b8':(zoneColor[c.zona]||'#f97316'))}),
+      el('div',{style:'min-width:0'},[el('div',{cls:'rname',text:c.locale+(c._ex?' · ex cliente':'')}),el('div',{cls:'rsub',text:(c._ex?'ex cliente'+(c.exDal?' dal '+c.exDal:'')+' · ':'')+(c.comune||'')+' · '+c.zona+km+(refs?' · '+refs:'')}),
         el('div',{cls:'pills'},(c.prodotti||[]).slice(0,5).map(function(p){return el('span',{cls:'pill p',text:p});}).concat((c.sigilli||[]).map(function(s){return el('span',{cls:'pill s',text:/^s[iì](\s|$)/i.test(s)?'Sigilli':'Sigilli '+s.toLowerCase()});})))])]));
   });
   if(!arr.length&&S.clients.length)L.appendChild(el('div',{style:'padding:30px;text-align:center;color:var(--muted);font-size:13px',text:'Nessun locale con questi filtri'}));
@@ -270,8 +300,9 @@ window.addEventListener('popstate',function(){if(SALTA_POP>0){SALTA_POP--;return
   if(OV_PASSO||document.getElementById('ov').classList.contains('show')){OV_PASSO=false;CHIUDI_DOPO=false;document.getElementById('ov').classList.remove('show');}});
 document.getElementById('ov').addEventListener('click',function(e){if(e.target.id==='ov')closeOv();});
 function openDetail(id,pan){
-  var c=S.clients.find(function(x){return x._id===id;});if(!c)return;S.sel=id;renderList();
+  var c=S.clients.find(function(x){return x._id===id;})||(S.ex||[]).find(function(x){return x._id===id;});if(!c)return;S.sel=id;renderList();
   if(pan&&map&&c.lat!=null){map.panTo({lat:c.lat,lng:c.lng});if(map.getZoom()<14)map.setZoom(15);}
+  if(c._ex){openDetailEx(c);return;}
   var refs=(c.referenti||[]).map(function(r){
     var acts=(r.telefoni||[]).map(function(t){return el('div',{cls:'acts'},[el('a',{cls:'act',href:telLink(t),text:'📞 '+t}),isMobile(t)?el('a',{cls:'act wa',href:waLink(t),target:'_blank',rel:'noopener',text:'WhatsApp'}):null]);});
     return el('div',{cls:'ref'},[el('div',{cls:'refn',text:r.nome||'Referente'}),el('div',{cls:'refc',text:'In rubrica: '+r.contatto})].concat(acts));});
@@ -293,6 +324,85 @@ function openDetail(id,pan){
       el('div',{cls:'acts',style:'margin-top:4px'},[el('button',{cls:'act',type:'button',text:'✏️ Modifica (rubrica e mappa)',onclick:function(){openModifica(c);}})])
     ])]);
 }
+// scheda di un EX cliente (27/11): com'era (referenti, prodotti, note) + "Ripristina come cliente" / "Elimina definitivamente"
+function openDetailEx(c){
+  var refs=(c.referenti||[]).map(function(r){
+    var acts=(r.telefoni||[]).map(function(t){return el('div',{cls:'acts'},[el('a',{cls:'act',href:telLink(t),text:'📞 '+t}),isMobile(t)?el('a',{cls:'act wa',href:waLink(t),target:'_blank',rel:'noopener',text:'WhatsApp'}):null]);});
+    return el('div',{cls:'ref'},[el('div',{cls:'refn',text:r.nome||'Referente'}),el('div',{cls:'refc',text:'In rubrica: '+r.contatto})].concat(acts));});
+  function chips(arr,cls){return el('div',{cls:'pills'},(arr||[]).map(function(p){return el('span',{cls:'pill '+cls,text:p,style:'font-size:12px;padding:4px 10px'});}));}
+  var bR=el('button',{cls:'act main',type:'button',text:'↩ Ripristina come cliente',onclick:function(){ripristinaEx(c,bR);}});
+  var bE=el('button',{cls:'act',type:'button',style:'color:var(--red)',text:'🗑️ Elimina definitivamente',onclick:function(){eliminaEx(c,bE);}});
+  openOv([
+    el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:c.locale}),el('div',{cls:'msub',text:'Ex cliente'+(c.exDal?' dal '+c.exDal:'')+' · '+(c.comune||'')+(c.provincia?' ('+c.provincia+')':'')+' · Zona '+c.zona})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
+    el('div',{cls:'mbody'},[
+      el('div',{cls:'exban',text:'Non è più cliente: è in rubrica come «Ex Tram …» con l\'etichetta «Ex clienti Framezzino».'}),
+      el('div',{},[el('div',{cls:'sec',text:'Indirizzo'}),el('div',{cls:'addr',text:c.indirizzo||''}),
+        el('div',{cls:'acts'},[el('a',{cls:'act',href:'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(c.indirizzo||'')+'&destination_place_id='+encodeURIComponent(c.placeId||c.id),target:'_blank',rel:'noopener',text:'🧭 Naviga'}),
+          /^https:\/\//i.test(c.maps||'')?el('a',{cls:'act',href:c.maps,target:'_blank',rel:'noopener',text:'Scheda Google Maps'}):null])]),
+      refs.length?el('div',{},[el('div',{cls:'sec',text:'Referenti'})].concat(refs)):null,
+      (c.prodotti||[]).length?el('div',{},[el('div',{cls:'sec',text:'Prendeva'}),chips(c.prodotti,'p')]):null,
+      (c.sigilli||[]).length?el('div',{},[el('div',{cls:'sec',text:'Sigilli'}),chips(c.sigilli,'s')]):null,
+      (c.note||[]).length?el('div',{},[el('div',{cls:'sec',text:'Note'}),el('div',{cls:'notes',text:c.note.join('\n')})]):null,
+      el('div',{cls:'acts',style:'margin-top:8px'},[bR]),el('div',{cls:'acts',style:'margin-top:8px'},[bE])])]);
+}
+// il contatto di un referente nella MIA rubrica Google (prova la mia copia, poi le altre: quella dell'altro dà errore)
+function contattoMio(r){
+  var rk=String(SY.rubrica||(function(){try{return localStorage.getItem('fn_rubrica')||'';}catch(e){return '';}})()).toLowerCase(),l=[];
+  if(r.copie&&r.copie[rk])l.push(r.copie[rk]);rnsRef(r).forEach(function(x){if(l.indexOf(x)<0)l.push(x);});
+  var i=0;function prova(){if(i>=l.length)return Promise.resolve(null);var rn=l[i++];
+    return papi(rn+'?personFields='+PF).catch(function(){return prova();});}
+  return prova();}
+// contatti appena cambiati/cancellati dall'app: Google li mostra nell'elenco solo dopo qualche minuto (27/11), quindi per
+// 15 minuti il 🔄 usa la versione letta subito dopo la modifica (e salta quelli cancellati)
+function ricordaFresco(p){SY.freschi=SY.freschi||{};SY.freschi[p.resourceName]={p:p,t:Date.now()};}
+function ricordaEliminato(rn){SY.eliminati=SY.eliminati||{};SY.eliminati[rn]=Date.now();}
+// rimette cliente un ex cliente: nome senza "Ex ", nota senza "Ex cliente dal …", gruppi clienti + zona, fuori dagli ex
+function togliExDal(n){return (n||'').split('\n').map(function(r){if(r.indexOf('Altro:')!==0)return r;
+    var pz=pezziAltro(r.slice(6)).filter(function(x){return !/^ex cliente dal /i.test(x);});return pz.length?'Altro: '+pz.join(' / '):null;})
+  .filter(function(r){return r!==null;}).join('\n');}
+function rimettiCliente(p,gs){
+  var nome=(((p.names||[])[0]||{}).displayName||'').trim(),dm=cdato(p,'framezzino')||{},body={},campi=[];
+  if(/^ex\s+/i.test(nome)){body.names=[{givenName:nome.replace(/^ex\s+/i,'')}];campi.push('names');}
+  var n=notaDi(p),n2=togliExDal(n);if(n2.trim()!==n.trim()){body.biographies=n2?[{value:n2,contentType:'TEXT_PLAIN'}]:[];campi.push('biographies');}
+  return (campi.length?contattoAggiorna(p,body,campi.join(',')):Promise.resolve(p)).then(function(np){
+    return gruppiZona(np,dm.senzaMappa?null:(dm.zona||null),gs).then(function(){var g=gs.find(function(y){return y.name===EX_GRUPPO;});
+      return g?papi(g.resourceName+'/members:modify','POST',{resourceNamesToRemove:[np.resourceName]}):null;})
+      .then(function(){return papi(np.resourceName+'?personFields='+PF);}).then(function(f){ricordaFresco(f);return f;});});}
+function ripristinaEx(c,btn){
+  if(!window.confirm('«'+c.locale+'» torna cliente?\n\nTolgo «Ex » dal nome, lo tolgo dall\'etichetta «'+EX_GRUPPO+'» e lo rimetto in «Clienti Framezzino» e nella zona '+(c.zona||'')+'. Torna sulla mappa; all\'altra rubrica arriva con il giro del cloud, che parte subito.'))return;
+  btn.disabled=true;btn.textContent='Salvo…';var fatti=0;
+  googleToken().then(gruppiLista).then(function(gs){
+    return (c.referenti||[]).reduce(function(pr,r){return pr.then(function(){return contattoMio(r).then(function(p){if(!p)return;fatti++;return rimettiCliente(p,gs);});});},Promise.resolve());
+  }).then(function(){if(!fatti)throw new Error('Non trovo questo cliente nella tua rubrica Google: aggiorna con 🔄 e riprova.');
+    closeOv();toast('«'+c.locale+'» è di nuovo cliente ✓ · sistemo la rubrica e la mappa');
+    S.ex=S.ex.filter(function(x){return x!==c;});applyFilters();setTimeout(sistemaEAggiorna,600);},
+    function(e){btn.disabled=false;btn.textContent='↩ Ripristina come cliente';toast(e.message,true);});}
+// ELIMINA DEFINITIVAMENTE (27/11, Jacopo): con due conferme. I contatti della mia rubrica vanno nel cestino di Google
+// Contatti (30 giorni); la copia nell'altra rubrica la toglie il giro del cloud (cancellazione propagata); la scheda
+// sparisce subito dalla mappa. Per chi può tornare c'è "Non è più cliente".
+function eliminaDefinitivo(c,lista,btn){
+  if(!lista.length){toast('Nessun contatto di questo locale nella tua rubrica Google: lo elimina chi ce l\'ha.',true);return;}
+  var nomi=lista.map(function(p){var n=(p.names||[])[0]||{};return '• '+(n.displayName||n.givenName||'(senza nome)');}).join('\n');
+  if(!window.confirm('ELIMINARE DEFINITIVAMENTE «'+c.locale+'»?\n\n'+nomi+'\n\nVa nel cestino di Google Contatti (si recupera entro 30 giorni), sparisce dalla mappa e anche dalla rubrica dell\'altro (giro del cloud).'+(c._ex?'':'\n\nSe può tornare cliente usa invece «🚫 Non è più cliente».')))return;
+  if(!window.confirm('Seconda conferma: elimino davvero '+(lista.length===1?'questo contatto':'questi '+lista.length+' contatti')+' di «'+c.locale+'»?'))return;
+  var testo=btn.textContent;btn.disabled=true;btn.textContent='Elimino…';
+  lista.reduce(function(pr,p){return pr.then(function(){return papi(p.resourceName+':deleteContact','DELETE').then(function(){ricordaEliminato(p.resourceName);});});},Promise.resolve())
+    .then(function(){
+      if(c._ex){var resto=S.ex.filter(function(x){return x!==c;});return scriviEx(resto).then(function(){S.ex=resto;});}
+      return CCOL.doc(c._id).delete();})
+    .then(function(){closeOv();toast('«'+c.locale+'» eliminato ✓ · lo tolgo anche dall\'altra rubrica');applyFilters();setTimeout(sistemaEAggiorna,600);},
+      function(e){btn.disabled=false;btn.textContent=testo;toast(e.message,true);});}
+function eliminaEx(c,btn){
+  btn.disabled=true;
+  googleToken().then(function(){return Promise.all((c.referenti||[]).map(contattoMio));})
+    .then(function(l){btn.disabled=false;var visti={};eliminaDefinitivo(c,l.filter(function(p){if(!p||visti[p.resourceName])return false;visti[p.resourceName]=1;return true;}),btn);},
+      function(e){btn.disabled=false;toast(e.message,true);});}
+// salva la lista degli ex clienti (cifrata) nel documento network_meta/ex_clienti
+function senzaInterni(c){var o={};Object.keys(c).forEach(function(k){if(k!=='_id'&&k!=='_ex')o[k]=c[k];});return o;}
+function scriviEx(lista){var l=lista.map(senzaInterni);
+  return enc({lista:l}).then(function(d){return EXDOC.set({d:d,v:1,aggiornato:new Date().toISOString(),da:S.user.email});}).then(function(){S.exSalvato=canonico(l);});}
+// confronto "a chiavi ordinate": stesso contenuto = stesso testo (niente riscritture inutili)
+function canonico(x){return JSON.stringify(x,function(k,v){if(v&&typeof v==='object'&&!Array.isArray(v)){var o={};Object.keys(v).sort().forEach(function(z){o[z]=v[z];});return o;}return v;});}
 
 // ── FILTRI (pannello) ─────────────────────────────────────────────────────
 function countBy(field){var o={};S.clients.forEach(function(c){(field==='zona'?[c.zona]:(c[field]||[])).forEach(function(v){o[v]=(o[v]||0)+1;});});return o;}
@@ -576,7 +686,7 @@ function ricomponi(c,refs,dm){
 function chiaveScheda(c){var o={};Object.keys(c).sort().forEach(function(k){if(k!=='_id'&&k!=='_doc')o[k]=c[k];});return JSON.stringify(o);}
 function leggiRubrica(){
   var all=[];
-  function page(tok){return papi('people/me/connections?pageSize=1000&personFields=names,phoneNumbers,biographies,organizations,memberships,clientData'
+  function page(tok){return papi('people/me/connections?pageSize=1000&personFields=names,phoneNumbers,biographies,organizations,memberships,clientData,metadata'
     +(tok?'&pageToken='+encodeURIComponent(tok):'')).then(function(r){all=all.concat(r.connections||[]);return r.nextPageToken?page(r.nextPageToken):all;});}
   return page(null).then(function(cs){return papi('contactGroups?pageSize=1000&groupFields=name,groupType').then(function(g){return [cs,g.contactGroups||[]];});});
 }
@@ -592,6 +702,12 @@ function aggiornaDaRubrica(daTocco){
   var gruppi=[];
   googleToken().then(leggiRubrica).then(function(r){
     var contacts=r[0];gruppi=r[1]||[];var gid=(gruppi.find(function(g){return g.name==='Clienti Framezzino';})||{}).resourceName;
+    // contatti cambiati o cancellati dall'app negli ultimi 15 minuti: l'elenco di Google li mostra in ritardo (27/11),
+    // quindi si usa la versione letta subito dopo la modifica e si saltano quelli appena cancellati
+    var ora=Date.now(),fr=SY.freschi||{},elim=SY.eliminati||{};
+    contacts=contacts.filter(function(p){var e=elim[p.resourceName];return !(e&&ora-e<9e5);})
+      .map(function(p){var f=fr[p.resourceName];  // la versione letta dopo la modifica, se l'elenco ne ha una piu' vecchia
+        return f&&ora-f.t<9e5&&aggiornatoIl(f.p)>aggiornatoIl(p)?f.p:p;});
     if(!gid)throw new Error('In questa rubrica non c\'è il gruppo "Clienti Framezzino": hai scelto l\'account Google giusto?');
     // di chi e' questa rubrica: dei referenti gia' sulla mappa (Jacopo / Marco), altrimenti dell'utente dell'app
     var rns={},conta={};contacts.forEach(function(p){rns[p.resourceName]=1;});
@@ -601,13 +717,16 @@ function aggiornaDaRubrica(daTocco){
     var rk=String(rubrica).toLowerCase();  // sui referenti "Jacopo"/"Marco", nelle copie "jacopo"/"marco"
     var exDi={};S.clients.forEach(function(c){(c.ex||[]).forEach(function(o){exDi[o]=c;});});
     var mio={};contacts.forEach(function(p){copieDi(p).forEach(function(x){mio[x]=p;});});  // rn (mio o della copia gemella) -> mio contatto
-    var miei={},decidere=[],senza=0,senzaLista=[],exLista=[],exGid=(gruppi.find(function(g){return g.name===EX_GRUPPO;})||{}).resourceName;
+    var miei={},decidere=[],senza=0,senzaLista=[],exLista=[],exMiei={},exGid=(gruppi.find(function(g){return g.name===EX_GRUPPO;})||{}).resourceName;
     contacts.forEach(function(p){
       var nm=(((p.names||[])[0]||{}).displayName)||'',dd=cdato(p,'framezzino_decidere');
       if(dd)decidere.push({nome:nm,motivo:dd.motivo||'',data:dd.data||'',rn:p.resourceName});
-      if(exGid&&(p.memberships||[]).some(function(m){return m.contactGroupMembership&&m.contactGroupMembership.contactGroupResourceName===exGid;}))exLista.push({nome:nm,rn:p.resourceName});
+      var inEx=!!exGid&&(p.memberships||[]).some(function(m){return m.contactGroupMembership&&m.contactGroupMembership.contactGroupResourceName===exGid;});
+      if(inEx)exLista.push({nome:nm,rn:p.resourceName});
       var inGr=(p.memberships||[]).some(function(m){return m.contactGroupMembership&&m.contactGroupMembership.contactGroupResourceName===gid;});
-      if(!inGr)return;
+      if(!inGr){  // ex cliente con il locale: va nella lista degli ex (pallini grigi a richiesta)
+        if(inEx){var dx=cdato(p,'framezzino');if(dx&&dx.placeId&&!dx.senzaMappa)(exMiei[dx.placeId]=exMiei[dx.placeId]||{dm:dx,refs:[]}).refs.push(p);}
+        return;}
       var dm=cdato(p,'framezzino');
       if(!dm||dm.senzaMappa||!dm.placeId){senza++;senzaLista.push({nome:nm,rn:p.resourceName,tel:(p.phoneNumbers||[]).map(function(t){return fmtPhone(t.value);}).filter(function(v,i,a){return v&&a.indexOf(v)===i;})});return;}
       var pid=dm.placeId,t=exDi[pid];
@@ -620,6 +739,9 @@ function aggiornaDaRubrica(daTocco){
       ps.forEach(function(p){var d=p._dm;if((n.agg||'')>(d.agg||'')&&(d.placeId!==pid||d.zona!==n.zona)){
         var nd=Object.assign({},d);LOC.forEach(function(k){if(n[k]!=null)nd[k]=n[k];});nd.placeId=pid;nd.agg=n.agg;
         allinea.push({p:p,dm:nd,zona:n.zona});}});}
+    // referenti gia' noti (schede dei clienti e degli ex): un cliente che torna o che diventa ex tiene il nome del referente
+    var refVecchi={};S.clients.concat(S.ex||[]).forEach(function(c){(c.referenti||[]).forEach(function(x){rnsRef(x).forEach(function(k){if(!refVecchi[k])refVecchi[k]=x;});});});
+    function vecchioDi(p){var v=null;copieDi(p).some(function(k){v=refVecchi[k];return !!v;});return v;}
     S.clients.forEach(function(c){
       var pid=c.placeId||c.id,vecchi={};(c.referenti||[]).forEach(function(x){rnsRef(x).forEach(function(k){if(!vecchi[k])vecchi[k]=x;});});
       var m=miei[pid],nuoviRn={};(m?m.refs:[]).forEach(function(p){copieDi(p).forEach(function(k){nuoviRn[k]=1;});});
@@ -637,18 +759,30 @@ function aggiornaDaRubrica(daTocco){
     });
     Object.keys(miei).forEach(function(pid){var m=miei[pid],dm=m.dm;
       m.refs.forEach(function(p){if((p._dm.agg||'')>(dm.agg||''))dm=p._dm;});
-      var n=ricomponi({id:pid,placeId:pid,locale:dm.locale||dm.nomeGoogle||'',zona:dm.zona||'Fuori zona'},m.refs.map(function(p){return referenteDa(p,rubrica,null);}),dm);
+      var n=ricomponi({id:pid,placeId:pid,locale:dm.locale||dm.nomeGoogle||'',zona:dm.zona||'Fuori zona'},m.refs.map(function(p){return referenteDa(p,rubrica,vecchioDi(p));}),dm);
       if(dm.agg)n.agg=dm.agg;
       controlla(n,pid,m.refs);
       scrivi.push({doc:docId(pid),c:n});});
+    // EX CLIENTI (27/11): una scheda per locale dai contatti dell'etichetta "Ex clienti Framezzino" (non piu' nei clienti),
+    // uguale qualunque rubrica la calcoli (le due rubriche hanno gli stessi ex clienti). Un locale che ha ancora un
+    // cliente attivo non compare tra gli ex.
+    var attivi={};S.clients.forEach(function(c){if(togli.indexOf(c)<0)attivi[c.placeId||c.id]=1;});scrivi.forEach(function(x){attivi[x.c.placeId||x.c.id]=1;});
+    var exCards=Object.keys(exMiei).filter(function(pid){return !attivi[pid];}).sort().map(function(pid){var m=exMiei[pid],dm=m.dm;
+      var refs=m.refs.map(function(p){var x=referenteDa(p,'',vecchioDi(p));delete x.rubrica;if(x.copie)x.resourceName=x.copie.jacopo||x.copie.marco||x.resourceName;return x;})
+        .sort(function(a,b){return String(a.id||a.resourceName).localeCompare(String(b.id||b.resourceName));});
+      var n=ricomponi({id:pid,placeId:pid,locale:dm.locale||dm.nomeGoogle||'',zona:dm.zona||'Fuori zona'},refs,dm);
+      m.refs.forEach(function(p){var x=/Ex cliente dal (\d{1,2}\/\d{1,2}\/\d{2,4})/i.exec(notaDi(p));if(x&&!n.exDal)n.exDal=x[1];});
+      return n;});
+    // confronto con quello che e' davvero salvato (non con quello che si vede: dopo "Ripristina" l'ex sparisce subito)
+    var exCambiati=!S.exLeggibile||S.exSalvato!==canonico(exCards);
     SY.decidere=decidere;SY.senza=senza;SY.senzaLista=senzaLista;SY.exLista=exLista;SY.quando=new Date();
     // freni di sicurezza: se qualcosa non torna non si tocca la mappa
     var conCampo=contacts.filter(function(p){return cdato(p,'framezzino');}).length,mie=S.clients.filter(function(c){return (c.referenti||[]).some(function(x){return x.rubrica===rubrica;});}).length;
     if(!conCampo)throw new Error('In questa rubrica nessun cliente ha ancora i dati per la mappa: la mappa non è stata toccata. (Avvisa Claude)');
     if(togli.length>Math.max(10,mie*0.05))throw new Error('Aggiornando dalla rubrica verrebbero tolti '+togli.length+' locali dalla mappa: troppi, mi fermo e non tocco niente. (Avvisa Claude)');
     if(/[?&]prova\b/.test(location.search)){  // prova: calcola e mostra, non scrive niente
-      window.FN_PROVA={rubrica:rubrica,scrivi:scrivi,togli:togli,allinea:allinea,decidere:decidere,senza:senza};
-      toast('PROVA: '+scrivi.length+' locali da aggiornare, '+togli.length+' da togliere, '+allinea.length+' contatti da allineare · niente scritto');return [0,0,0];}
+      window.FN_PROVA={rubrica:rubrica,scrivi:scrivi,togli:togli,allinea:allinea,decidere:decidere,senza:senza,ex:exCards,exCambiati:exCambiati};
+      toast('PROVA: '+scrivi.length+' locali da aggiornare, '+togli.length+' da togliere, '+allinea.length+' contatti da allineare, '+exCards.length+' ex clienti'+(exCambiati?' (da salvare)':'')+' · niente scritto');return [0,0,0];}
     var fatto=!scrivi.length&&!togli.length?Promise.resolve():Promise.all(scrivi.map(function(x){return enc(x.c).then(function(d){return {ref:CCOL.doc(x.doc),d:d};});})).then(function(rows){
       var ops=rows.map(function(x){return {set:x};}).concat(togli.map(function(c){return {del:CCOL.doc(c._id)};}));
       var now=new Date().toISOString(),chunks=[];for(var i=0;i<ops.length;i+=400)chunks.push(ops.slice(i,i+400));
@@ -656,15 +790,19 @@ function aggiornaDaRubrica(daTocco){
         ch.forEach(function(o){if(o.set)b.set(o.set.ref,{d:o.set.d,v:1,aggiornato:now,da:S.user.email});else b.delete(o.del);});return b.commit();});},Promise.resolve());
     });
     return fatto.then(function(){
+      if(!exCambiati)return;
+      return scriviEx(exCards).then(function(){S.ex=exCards.map(function(c){c._id='ex:'+(c.placeId||c.id);c._ex=true;return c;});S.exLeggibile=true;});
+    }).then(function(){
       if(!allinea.length)return 0;
       if(allinea.length>40){toast(allinea.length+' contatti da allineare in rubrica: troppi, non li tocco. (Avvisa Claude)',true);return 0;}
       return allineaRubrica(allinea,gruppi);
-    }).then(function(k){return [scrivi.length,togli.length,k];});
+    }).then(function(k){return [scrivi.length,togli.length,k,exCambiati?1:0];});
   }).then(function(n){
     try{localStorage.setItem('fn_sync_'+(SY.rubrica||''),String(Date.now()));localStorage.setItem('fn_rubrica',SY.rubrica||'');localStorage.setItem('fn_dd_n',String(SY.decidere.length));}catch(e){}
     if(!/[?&]prova\b/.test(location.search))db.collection('network_meta').doc('aggiornamento').set({quando:new Date().toISOString(),chi:SY.rubrica||''}).catch(function(){});
     SY.running=false;segnaSync();
-    if(daTocco||n[0]||n[1]||n[2])toast('Mappa aggiornata dalla rubrica ✓'+(n[0]?' · '+n[0]+' locali aggiornati':'')+(n[1]?' · '+n[1]+' tolti':'')+(n[2]?' · '+n[2]+' contatti allineati':'')+(!n[0]&&!n[1]&&!n[2]?' · niente da cambiare':''));
+    if(daTocco||n[0]||n[1]||n[2]||n[3])toast('Mappa aggiornata dalla rubrica ✓'+(n[0]?' · '+n[0]+' locali aggiornati':'')+(n[1]?' · '+n[1]+' tolti':'')+(n[2]?' · '+n[2]+' contatti allineati':'')+(n[3]?' · ex clienti aggiornati':'')+(!n[0]&&!n[1]&&!n[2]&&!n[3]?' · niente da cambiare':''));
+    applyFilters();
     if(SY.decidere.length&&!daTocco)toast(SY.decidere.length+(SY.decidere.length===1?' contatto da decidere':' contatti da decidere')+': tocca 🔄');
   }).catch(function(e){SY.running=false;segnaSync();if(daTocco||!/Accesso Google non ancora/.test(e.message))toast(e.message,true);});
 }
@@ -759,7 +897,9 @@ function openSync(){
 // ── MODIFICHE DALL'APP (21/11): scheda del locale e "Da decidere" → rubrica Google di chi usa l'app + mappa ──────
 // Si scrive solo nei contatti della PROPRIA rubrica (Google non permette altro). Locale e zona valgono per tutta la
 // scheda: i contatti dell'altra rubrica si allineano da soli al suo 🔄 (vedi aggiornaDaRubrica, campo "agg").
-var PF='names,phoneNumbers,biographies,organizations,memberships,clientData,addresses,urls';
+var PF='names,phoneNumbers,biographies,organizations,memberships,clientData,addresses,urls,metadata';
+// ora dell'ultima modifica di un contatto secondo Google (per scegliere la versione piu' recente, 27/11)
+function aggiornatoIl(p){return ((p&&p.metadata&&p.metadata.sources)||[]).reduce(function(m,s){return s.updateTime&&s.updateTime>m?s.updateTime:m;},'');}
 function oraIso(){return new Date().toISOString();}
 function contattoAggiorna(p,body,campi){body.etag=p.etag;
   return papi(p.resourceName+':updateContact?updatePersonFields='+campi+'&personFields='+PF,'PATCH',body);}
@@ -910,7 +1050,8 @@ function formModifica(c,miei,gs){
       el('div',{cls:'flbl',text:'Locale su Google Maps — ora: '+(c.nomeGoogle||c.locale)+', '+(c.indirizzo||'')}),
       el('div',{cls:'msub',style:'margin:0 0 6px',text:'Solo se l\'indirizzo è sbagliato: cerca il locale giusto.'}),cerca,box,
       el('div',{cls:'flbl',text:'Zona'}),zsel,
-      err,save,miei.length?el('button',{cls:'act',type:'button',style:'width:100%;justify-content:center;margin-top:14px;color:var(--red)',text:'🚫 Non è più cliente',onclick:function(e){exCliente(c,miei,gs,e.currentTarget);}}):null])]);
+      err,save,miei.length?el('button',{cls:'act',type:'button',style:'width:100%;justify-content:center;margin-top:14px;color:var(--red)',text:'🚫 Non è più cliente',onclick:function(e){exCliente(c,miei,gs,e.currentTarget);}}):null,
+      miei.length?el('button',{cls:'act',type:'button',style:'width:100%;justify-content:center;margin-top:8px;color:var(--red)',text:'🗑️ Elimina definitivamente',onclick:function(e){eliminaDefinitivo(c,miei,e.currentTarget);}}):null])]);
   save.addEventListener('click',function(){
     err.textContent='';var ora=oraIso(),pid=c.placeId||c.id,locale=fLocale.value.trim()||c.locale,zona=zsel.value,pl=st.place;
     var cambiaLoc=!!pl&&pl.id!==pid,cambiaZona=zona!==c.zona,cambiaNome=locale!==c.locale;
@@ -1028,19 +1169,22 @@ function conAltro(nota,testo){var r=(nota||'').split('\n').filter(function(x){re
 function gruppoEx(gs){var g=gs.find(function(x){return x.name===EX_GRUPPO;});if(g)return Promise.resolve(g.resourceName);
   return papi('contactGroups','POST',{contactGroup:{name:EX_GRUPPO}}).then(function(n){gs.push({name:EX_GRUPPO,resourceName:n.resourceName,groupType:'USER_CONTACT_GROUP'});return n.resourceName;});}
 function exCliente(c,miei,gs,btn){
-  if(!window.confirm('«'+c.locale+'» non è più cliente?\n\nNon si cancella niente: resta in rubrica (tua e, al prossimo giro del cloud, dell\'altro) come «Ex Tram …», con l\'etichetta «'+EX_GRUPPO+'» e «Ex cliente dal …» nelle note, ed esce dalla mappa.\n\nSe torna cliente: 🔄 → Ex clienti → «↩ Torna cliente».'))return;
+  if(!window.confirm('«'+c.locale+'» non è più cliente?\n\nNon si cancella niente: resta in rubrica (tua e, al prossimo giro del cloud, dell\'altro) come «Ex Tram …», con l\'etichetta «'+EX_GRUPPO+'» e «Ex cliente dal …» nelle note, ed esce dalla mappa.\n\nSe torna cliente: tasto «🗂️ Ex clienti» sulla mappa → toccalo → «↩ Ripristina come cliente».'))return;
   btn.disabled=true;btn.textContent='Salvo…';
   var oggi=new Date().toLocaleDateString('it-IT'),perId={};gs.forEach(function(g){perId[g.resourceName]=g.name;});
   gruppoEx(gs).then(function(gid){
     return miei.reduce(function(pr,p){return pr.then(function(){
       var nome=(((p.names||[])[0]||{}).displayName||'').trim(),body={},campi=[],n=notaDi(p);
-      if(!/^ex\s/i.test(nome)){body.names=[{givenName:('Ex '+nome).trim()}];campi.push('names');}
+      // "Tram Ex Tram …" (rimasto a meta' il 27/11) torna "Ex Tram …": mai "Ex Tram Ex Tram"
+      var exNome=/^(tram|tam)\s+ex\s+/i.test(nome)?nome.replace(/^(tram|tam)\s+/i,''):(/^ex\s/i.test(nome)?nome:('Ex '+nome).trim());
+      if(exNome!==nome){body.names=[{givenName:exNome}];campi.push('names');}
       if(n.indexOf('Ex cliente dal')<0){body.biographies=[{value:conAltro(n,'Ex cliente dal '+oggi),contentType:'TEXT_PLAIN'}];campi.push('biographies');}
       return (campi.length?contattoAggiorna(p,body,campi.join(',')):Promise.resolve(p)).then(function(np){
         var ha=(np.memberships||[]).map(function(m){return m.contactGroupMembership&&m.contactGroupMembership.contactGroupResourceName;}).filter(Boolean);
         var via=ha.filter(function(id){var g=perId[id]||'';return g.indexOf('Clienti Framezzino')===0||g==='Personali';});
         return (ha.indexOf(gid)<0?papi(gid+'/members:modify','POST',{resourceNamesToAdd:[np.resourceName]}):Promise.resolve())
-          .then(function(){return Promise.all(via.map(function(id){return papi(id+'/members:modify','POST',{resourceNamesToRemove:[np.resourceName]});}));});
+          .then(function(){return Promise.all(via.map(function(id){return papi(id+'/members:modify','POST',{resourceNamesToRemove:[np.resourceName]});}));})
+          .then(function(){return papi(np.resourceName+'?personFields='+PF).then(ricordaFresco,function(){});});
       });});},Promise.resolve());
   }).then(function(){closeOv();toast('«'+c.locale+'» segnato come ex cliente ✓ · lo tolgo dalla mappa');setTimeout(sistemaEAggiorna,600);},
     function(e){btn.disabled=false;btn.textContent='🚫 Non è più cliente';toast(e.message,true);});
@@ -1056,12 +1200,8 @@ function openExClienti(){
 function tornaCliente(x,btn){
   if(!window.confirm('«'+(x.nome||'')+'» torna cliente?\n\nTolgo «Ex » dal nome, lo rimetto nei gruppi dei clienti e torna sulla mappa (anche per l\'altro, al prossimo giro del cloud).'))return;
   btn.disabled=true;btn.textContent='Salvo…';
-  googleToken().then(function(){return Promise.all([papi(x.rn+'?personFields='+PF),gruppiLista()]);}).then(function(z){var p=z[0],gs=z[1];
-    var nome=(((p.names||[])[0]||{}).displayName||'').trim(),dm=cdato(p,'framezzino')||{};
-    var passo=/^ex\s+/i.test(nome)?contattoAggiorna(p,{names:[{givenName:nome.replace(/^ex\s+/i,'')}]},'names'):Promise.resolve(p);
-    return passo.then(function(np){return gruppiZona(np,dm.senzaMappa?null:(dm.zona||null),gs).then(function(){
-      var g=gs.find(function(y){return y.name===EX_GRUPPO;});
-      return g?papi(g.resourceName+'/members:modify','POST',{resourceNamesToRemove:[np.resourceName]}):null;});});
+  googleToken().then(function(){return Promise.all([papi(x.rn+'?personFields='+PF),gruppiLista()]);}).then(function(z){
+    return rimettiCliente(z[0],z[1]);  // stessa cosa di "Ripristina come cliente" dalla mappa
   }).then(function(){closeOv();toast('«'+(x.nome||'').replace(/^ex\s+/i,'')+'» è di nuovo cliente ✓ · lo rimetto sulla mappa');
     SY.exLista=(SY.exLista||[]).filter(function(y){return y.rn!==x.rn;});setTimeout(sistemaEAggiorna,600);},
     function(e){btn.disabled=false;btn.textContent='↩ Torna cliente';toast(e.message,true);});
@@ -1103,8 +1243,9 @@ var GUIDA=[
     'Sotto il numero dei locali c\'è quando è stata aggiornata la mappa l\'ultima volta e da chi.']],
   ['Modificare, ex clienti, cancellare',[
     'Scheda del locale → ✏️ Modifica: prodotti, sigilli, pagamento, note, ditta, nome, locale e zona. Va in rubrica e sulla mappa; all\'altro arriva al giro del cloud (o subito con «Sistema la rubrica»).',
-    'Non è più cliente: Modifica → 🚫 Non è più cliente. Non si cancella: resta in rubrica come «Ex Tram …» (etichetta «Ex clienti Framezzino») ed esce dalla mappa. Se torna: 🔄 → Ex clienti → ↩ Torna cliente (oppure togli «Ex » dal nome sul telefono).',
-    'Cancellare davvero: dal telefono. Sparisce anche all\'altro e dalla mappa; resta 30 giorni nel cestino di Google Contatti.',
+    'Non è più cliente: Modifica → 🚫 Non è più cliente. Non si cancella: resta in rubrica come «Ex Tram …» (etichetta «Ex clienti Framezzino») ed esce dalla mappa. Passa anche all\'altro.',
+    'Vedere gli ex clienti: tasto «🗂️ Ex clienti» sulla mappa → nascosti, insieme ai clienti (pallini grigi «ex») o solo loro. Tocca un ex cliente → «↩ Ripristina come cliente» (torna nei clienti e nella sua zona, anche per l\'altro). Anche da 🔄 → Ex clienti.',
+    'Eliminare davvero: Modifica (o la scheda dell\'ex cliente) → 🗑️ Elimina definitivamente, con due conferme. Sparisce anche all\'altro e dalla mappa; resta 30 giorni nel cestino di Google Contatti.',
     'Clienti senza locale: 🔄 → «📦 … senza locale»: telefono, WhatsApp e «📍 Metti sulla mappa».']],
   ['Attenzione',[
     'Mai importare file .vcf sul telefono: sostituisce la rubrica.',
@@ -1173,7 +1314,7 @@ document.getElementById('mbtn').addEventListener('click',function(){
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🗺️ Mostra tutti sulla mappa',onclick:function(){S.f={zone:{},prod:{},sig:{},pag:{}};S.q='';document.getElementById('search').value='';applyFilters(true);closeOv();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🔑 Cambia password di cifratura',onclick:openRekey}),
       el('button',{cls:'act',style:'justify-content:flex-start;color:var(--red)',text:'↩ Esci',onclick:function(){if(!window.confirm('Vuoi uscire? La chiave di cifratura verrà rimossa da questo dispositivo.'))return;
-        if(unsub)unsub();if(unsubMeta)unsubMeta();S.key=null;S.clients=[];gTok=null;try{localStorage.removeItem('fn_gtok');sessionStorage.removeItem('fn_gtok');localStorage.removeItem('fn_dd_n');}catch(e){}
+        if(unsub)unsub();if(unsubMeta)unsubMeta();if(unsubEx)unsubEx();S.key=null;S.clients=[];S.ex=[];gTok=null;try{localStorage.removeItem('fn_gtok');sessionStorage.removeItem('fn_gtok');localStorage.removeItem('fn_dd_n');}catch(e){}
         dropKey().then(function(){auth.signOut();closeOv();});}})])]);
 });
 
@@ -1201,6 +1342,10 @@ function doRekey(btn,err){
     .then(function(r){  // anche la chiave GitHub dello script nel cloud va ricifrata con la nuova password
       return GHDOC.get().then(function(s){if(!s.exists||!s.data().d)return r;
         return dec(s.data().d,oldK).then(function(o){return enc(o,newK);}).then(function(x){r.rows.push({ref:GHDOC,d:x,gh:true});return r;},function(){return r;});});
+    })
+    .then(function(r){  // e la lista degli ex clienti (27/11); se non si decifra si rifa' da sola al 🔄
+      return EXDOC.get().then(function(s){if(!s.exists||!s.data().d)return r;
+        return dec(s.data().d,oldK).then(function(o){return enc(o,newK);}).then(function(x){r.rows.push({ref:EXDOC,d:x,gh:true});return r;},function(){return r;});});
     });
   })
   .then(function(r){
@@ -1233,3 +1378,4 @@ function finisciRekey(refs){  // ripetibile senza danni: riscrive solo dove c'e'
   Promise.all(refs.map(function(ref){return ref.get().then(function(s){return s.data()&&s.data().dn?{ref:ref,dn:s.data().dn}:null;});}))
   .then(function(l){return aBlocchi(l.filter(Boolean),function(b,x){b.update(x.ref,{d:x.dn,dn:FV.delete(),aggiornato:now,da:S.user.email});});})
   .catch(function(){});}
+document.getElementById('exbtn').addEventListener('click',function(e){e.stopPropagation();openExMode();});
