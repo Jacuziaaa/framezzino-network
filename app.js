@@ -220,7 +220,10 @@ function fitAll(){var v=visibili();if(!map||!v.length)return;var b=new google.ma
 
 // ── FILTRI E LISTA ────────────────────────────────────────────────────────
 function activeF(k){return Object.keys(S.f[k]).filter(function(x){return S.f[k][x];});}
-function matchesF(c,k,field){var a=activeF(k);if(!a.length)return true;var v=field==='zona'?[c.zona]:(c[field]||[]);return a.some(function(x){return v.indexOf(x)>=0;});}
+// valori di un cliente per filtri e statistiche; i sigilli per tipo (+ omaggio), senza i colori (28/11)
+function valoriDi(c,field){if(field==='zona')return [c.zona];if(field!=='sigilli')return c[field]||[];
+  var o=[];(c.sigilli||[]).forEach(function(s){s=sigFiltro(s);if(s&&o.indexOf(s)<0)o.push(s);});return o;}
+function matchesF(c,k,field){var a=activeF(k);if(!a.length)return true;var v=valoriDi(c,field);return a.some(function(x){return v.indexOf(x)>=0;});}
 function passaFiltri(c,q){
   if(!matchesF(c,'zone','zona')||!matchesF(c,'prod','prodotti')||!matchesF(c,'sig','sigilli')||!matchesF(c,'pag','pagamento'))return false;
   if(q){var hay=norm([c.locale,c.nomeGoogle,c.comune,c.indirizzo,c.zona,c.azienda,c.piva,(c.referenti||[]).map(function(r){return r.nome+' '+r.contatto;}).join(' ')].join(' '));
@@ -437,7 +440,7 @@ function scriviEx(lista){var l=lista.map(senzaInterni);
 function canonico(x){return JSON.stringify(x,function(k,v){if(v&&typeof v==='object'&&!Array.isArray(v)){var o={};Object.keys(v).sort().forEach(function(z){o[z]=v[z];});return o;}return v;});}
 
 // ── FILTRI (pannello) ─────────────────────────────────────────────────────
-function countBy(field){var o={};S.clients.forEach(function(c){(field==='zona'?[c.zona]:(c[field]||[])).forEach(function(v){o[v]=(o[v]||0)+1;});});return o;}
+function countBy(field){var o={};S.clients.forEach(function(c){valoriDi(c,field).forEach(function(v){o[v]=(o[v]||0)+1;});});return o;}
 function chipGroup(title,k,field){var cnt=countBy(field);var keys=Object.keys(cnt).sort(function(a,b){return field==='zona'?a.localeCompare(b):cnt[b]-cnt[a];});
   return el('div',{cls:'fgroup'},[el('div',{cls:'sec',text:title}),el('div',{cls:'chips'},keys.map(function(v){
     var b=el('button',{cls:'chip'+(S.f[k][v]?' on':''),onclick:function(){S.f[k][v]=!S.f[k][v];b.classList.toggle('on');}},[field==='zona'?el('span',{cls:'zdot',style:'margin:0;width:10px;height:10px;background:'+(zoneColor[v]||'#999')}):null,v,el('span',{cls:'n',text:String(cnt[v])})]);return b;}))]);}
@@ -461,8 +464,101 @@ document.getElementById('stbtn').addEventListener('click',function(){
 // Stesso formato degli script del PC: Nome "Tram Comune Locale", Cognome referente, P.IVA in Qualifica,
 // SDI in Reparto, indirizzo di lavoro, link Maps, note a righe fisse, gruppi "Clienti Framezzino" + zona.
 var PRODOTTI=['S','M','L','Magnum','XXL','Rettangolari','Panini','Toast','Tostoni','Maxi tostoni','Galaxy','Club','Veline','Sacchetti'];
-var SIGILLI=['Personalizzati','Colorati','Smile','Produzione propria','Produzione artigianale'];  // artigianale: catalogo 27/11
 var PAGAMENTI=['Bonifico','Contrassegno','PayPal','Spedizione','RiBa'];  // RiBa: 28/11
+// ── SIGILLI COME IN DELIVERYSYNC (28/11, Jacopo) ─────────────────────────────────────────────────────────
+// Catalogo Framezzino (27/11), uguale a DeliverySync. Nella scheda del cliente (riga «Sigilli:» della nota, voci separate
+// da «, ») c'e' cosa usa di solito, SENZA i kit (i kit si scelgono nell'ordine di DeliverySync):
+//   «Produzione propria verde» · «Colorati verde + rosso» · «Produzione artigianale misti» · «Personalizzati a 3 colori» ·
+//   «Vegano» · «(omaggio)» in fondo se li regaliamo. Le voci di prima («Personalizzati», «Colorati (omaggio)»...) valgono uguale.
+var SIG_GRUPPI=[['Informativi',['Vegano','Vegetariano','Senza lattosio','Senza glutine']],
+  ['Produzione',['Produzione propria','Produzione artigianale']],
+  ['Grafici',['Carnevale','Pasqua','Estivi','Halloween','Natale','Smile','Colorati']],
+  ['Personalizzati',['Personalizzati']]];
+var SIG_TIPI=[].concat.apply([],SIG_GRUPPI.map(function(g){return g[1];}));
+var SIG_COLORATI=['Produzione propria','Produzione artigianale','Colorati'];  // un colore, piu' colori (kit divisi) o misti
+var SIG_COLORI=[['arancione','#f97316'],['rosso','#ef4444'],['verde','#22c55e'],['azzurro','#38bdf8'],['viola','#a855f7'],['giallo','#eab308']];
+var SIGILLI=SIG_TIPI;
+// voce della scheda -> {tipo, colori, misti, ncol, om}; null se non e' nel catalogo (resta com'e', «Scritti prima»)
+function sigVoce(t){var s=String(t||'').trim(),om=/\s*\(omaggio\)$/i.test(s);if(om)s=s.replace(/\s*\(omaggio\)$/i,'');
+  var l=s.toLowerCase(),tipo=SIG_TIPI.slice().sort(function(a,b){return b.length-a.length;}).find(function(x){x=x.toLowerCase();return l===x||l.indexOf(x+' ')===0;});
+  if(!tipo)return null;var r={tipo:tipo,colori:[],misti:false,ncol:0,om:om},c=l.slice(tipo.length).trim();
+  if(!c)return r;
+  if(c==='misti'&&SIG_COLORATI.indexOf(tipo)>=0){r.misti=true;return r;}
+  var m=c.match(/^a ([1-6]) color[ei]$/);if(m&&tipo==='Personalizzati'){r.ncol=+m[1];return r;}
+  var cc=c.split(/\s*\+\s*/);
+  if(SIG_COLORATI.indexOf(tipo)>=0&&cc.every(function(x){return SIG_COLORI.some(function(k){return k[0]===x;});})){r.colori=cc.filter(function(x,i){return cc.indexOf(x)===i;});return r;}
+  return null;}
+function sigScrivi(r){var t=r.tipo;
+  if(SIG_COLORATI.indexOf(r.tipo)>=0){if(r.misti)t+=' misti';else if(r.colori.length)t+=' '+r.colori.join(' + ');}
+  if(r.tipo==='Personalizzati'&&r.ncol)t+=' a '+r.ncol+(r.ncol===1?' colore':' colori');
+  return t+(r.om?' (omaggio)':'');}
+function sigCanon(t){var r=sigVoce(t);return r?sigScrivi(r):String(t||'').trim();}
+function sigChiave(t){var r=sigVoce(t);return r?r.tipo:String(t||'').trim();}       // un tipo = una voce nella scheda
+function sigFiltro(t){var r=sigVoce(t);return r?r.tipo+(r.om?' (omaggio)':''):String(t||'').trim();}  // filtri e statistiche
+// riquadro dei sigilli (＋ Nuovo e Modifica): come in DeliverySync, senza i kit. box.valore() = voci per la scheda
+function sigilliEditor(voci){
+  var righe=[],vecchi=[],aperto=false,box=el('div',{});
+  (voci||[]).forEach(function(v){var r=sigVoce(v),t=String(v||'').trim();if(r){if(!righe.some(function(x){return x.tipo===r.tipo;}))righe.push(r);}else if(t&&vecchi.indexOf(t)<0)vecchi.push(t);});
+  function bott(t,on,col,fn){return el('button',{cls:'chip'+(on&&!col?' on':''),type:'button',text:t,style:col?'border-color:'+col+(on?';background:'+col+';color:#fff':''):null,onclick:fn});}
+  function riga(r,i){
+    var kids=[el('div',{style:'display:flex;align-items:center;justify-content:space-between;gap:8px'},[el('b',{style:'font-size:13px',text:r.tipo}),
+      el('div',{style:'display:flex;gap:6px;align-items:center'},[bott('🎁 Omaggio',r.om,null,function(){r.om=!r.om;draw();}),
+        el('button',{cls:'chip',type:'button',text:'✕',title:'Togli',onclick:function(){righe.splice(i,1);draw();}})])])];
+    if(SIG_COLORATI.indexOf(r.tipo)>=0){
+      kids.push(el('div',{cls:'chips',style:'margin-top:6px'},SIG_COLORI.map(function(k){var on=r.colori.indexOf(k[0])>=0;
+        return bott(k[0],on,k[1],function(){r.misti=false;var j=r.colori.indexOf(k[0]);if(j>=0)r.colori.splice(j,1);else r.colori.push(k[0]);draw();});})
+        .concat([bott('🎨 Misti',r.misti,'#334155',function(){r.misti=!r.misti;r.colori=[];draw();})])));
+      if(!r.colori.length&&!r.misti)kids.push(el('div',{cls:'msub',style:'margin:4px 0 0',text:'Un colore, più colori (kit divisi) o «Misti». Se non si sa, lascia vuoto.'}));}
+    if(r.tipo==='Personalizzati')kids.push(el('div',{cls:'chips',style:'margin-top:6px;align-items:center'},[el('span',{cls:'msub',style:'margin:0',text:'Colori:'})]
+      .concat([1,2,3,4,5,6].map(function(n){return bott(String(n),r.ncol===n,'#334155',function(){r.ncol=r.ncol===n?0:n;draw();});}))));
+    return el('div',{style:'border:1.5px solid var(--border);border-radius:12px;padding:8px 10px;margin-bottom:6px;background:var(--surface)'},kids);}
+  function draw(){box.innerHTML='';
+    righe.forEach(function(r,i){box.appendChild(riga(r,i));});
+    if(vecchi.length)box.appendChild(el('div',{cls:'chips',style:'margin-bottom:6px;align-items:center'},[el('span',{cls:'msub',style:'margin:0',text:'Scritti prima:'})]
+      .concat(vecchi.map(function(x,i){return el('button',{cls:'chip',type:'button',title:'Togli',text:x+'  ✕',onclick:function(){vecchi.splice(i,1);draw();}});}))));
+    if(!righe.length&&!vecchi.length)box.appendChild(el('div',{cls:'msub',style:'margin:0 0 6px',text:'Nessun sigillo (neutri)'}));
+    box.appendChild(el('button',{cls:'chip'+(aperto?' on':''),type:'button',text:aperto?'✕ Chiudi':'＋ Aggiungi sigilli',onclick:function(){aperto=!aperto;draw();}}));
+    if(aperto)box.appendChild(el('div',{style:'border:1.5px dashed var(--border);border-radius:12px;padding:4px 10px 10px;margin-top:6px'},SIG_GRUPPI.map(function(g){
+      return el('div',{},[el('div',{cls:'flbl',style:'margin:8px 0 5px',text:g[0]}),el('div',{cls:'chips'},g[1].map(function(t){var gia=righe.some(function(r){return r.tipo===t;});
+        return el('button',{cls:'chip'+(gia?' on':''),type:'button',text:(gia?'✓ ':'')+t,onclick:function(){if(!gia)righe.push({tipo:t,colori:[],misti:false,ncol:0,om:false});aperto=false;draw();}});}))]);})));}
+  draw();
+  box.valore=function(){return righe.map(sigScrivi).concat(vecchi);};
+  return box;}
+// riquadro delle condizioni (＋ Nuovo e Modifica): come «＋ Aggiungi condizione» di DeliverySync, stesso formato della
+// riga «Condizioni:» (10 L + 1 L omaggio; sconto 5%; prezzo L 20 €; spedizione gratis...). box.valore() = elenco
+function condizioniEditor(iniziali){
+  var lista=(iniziali||[]).slice(),tipo='',box=el('div',{});
+  var TIPI=[['omaggio','🎁 Omaggio'],['sconto','💸 Sconto'],['prezzo','💶 Prezzo'],['sped','🚚 Spedizione'],['libero','✍️ Scrivi tu']];
+  function numC(v){return String(v||'').trim().replace(/\s+/g,'').replace(/€/g,'').replace(/%/g,'').replace('.',',');}
+  function inp(ph,w,num){var x=el('input',{cls:'fi sm',placeholder:ph,autocomplete:'off',style:'width:'+w+';flex:none;padding:7px 9px'});if(num)x.inputMode='decimal';return x;}
+  function sp(t){return el('span',{style:'font-size:13px;font-weight:700',text:t});}
+  function metti(t){t=(t||'').trim();if(!t){toast('Scrivi la condizione',true);return;}if(lista.indexOf(t)<0)lista.push(t);tipo='';draw();}
+  function menu(){var kids=[el('div',{cls:'chips'},TIPI.map(function(t){return el('button',{cls:'chip'+(tipo===t[0]?' on':''),type:'button',text:t[1],onclick:function(){tipo=t[0];draw();}});}))];
+    if(tipo==='scegli'){kids.push(el('div',{cls:'msub',style:'margin:6px 0 0',text:'Scegli che tipo di condizione aggiungere.'}));return kids;}
+    var r=[],es='',fai,primo;
+    if(tipo==='omaggio'){var a=inp('10 L','80px'),b=inp('1 L','80px');r.push(a,sp('+'),b,sp('omaggio'));primo=a;
+      es='Esempi: 10 L + 1 L omaggio · 10 L + 0,5 L omaggio';fai=function(){return a.value.trim()&&b.value.trim()?a.value.trim()+' + '+b.value.trim()+' omaggio':'';};}
+    else if(tipo==='sconto'){var p=inp('5','56px',true),su=inp('su cosa (se serve)','150px');r.push(sp('Sconto'),p,sp('%'),su);primo=p;
+      es='Esempi: sconto 5% · sconto 50% sui sigilli';fai=function(){var n=numC(p.value);return n?'sconto '+n+'%'+(su.value.trim()?' '+su.value.trim():''):'';};}
+    else if(tipo==='prezzo'){var ar=inp('L','64px'),eu=inp('20','64px',true),iva=el('button',{cls:'chip',type:'button',text:'+ IVA',onclick:function(){iva.classList.toggle('on');}});
+      r.push(sp('Prezzo'),ar,eu,sp('€'),iva);primo=ar;es='Esempi: prezzo L 20 € · prezzo L 22 € + IVA';
+      fai=function(){var n=numC(eu.value);return n?'prezzo '+(ar.value.trim()?ar.value.trim()+' ':'')+n+' €'+(iva.classList.contains('on')?' + IVA':''):'';};}
+    else if(tipo==='sped'){var ss=inp('15','64px',true);r.push(sp('Spedizione'),el('button',{cls:'chip',type:'button',text:'Gratis',onclick:function(){metti('spedizione gratis');}}),sp('oppure'),ss,sp('€'));primo=ss;
+      es='Esempi: spedizione gratis · spedizione 15 €';fai=function(){var n=numC(ss.value);return n?'spedizione '+n+' €':'';};}
+    else{var lb=inp('scrivi la condizione','100%');lb.style.flex='1 1 100%';r.push(lb);primo=lb;es='Una condizione per volta.';fai=function(){return lb.value.trim();};}
+    r.push(el('button',{cls:'chip on',type:'button',text:'✓ Aggiungi',onclick:function(){metti(fai());}}));
+    var riga=el('div',{style:'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px'},r);
+    [].forEach.call(riga.querySelectorAll('input'),function(x){x.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();metti(fai());}});});
+    kids.push(riga,el('div',{cls:'msub',style:'margin:6px 0 0',text:es}));setTimeout(function(){if(primo)primo.focus();},30);return kids;}
+  function draw(){box.innerHTML='';
+    box.appendChild(lista.length?el('div',{cls:'chips',style:'margin-bottom:6px'},lista.map(function(x,i){
+      return el('button',{cls:'chip on',type:'button',title:'Togli',text:x+'  ✕',onclick:function(){lista.splice(i,1);draw();}});}))
+      :el('div',{cls:'msub',style:'margin:0 0 6px',text:'Nessuna condizione'}));
+    box.appendChild(el('button',{cls:'chip'+(tipo?' on':''),type:'button',text:tipo?'✕ Chiudi':'＋ Aggiungi condizione',onclick:function(){tipo=tipo?'':'scegli';draw();}}));
+    if(tipo)box.appendChild(el('div',{style:'border:1.5px dashed var(--border);border-radius:12px;padding:8px 10px;margin-top:6px'},menu()));}
+  draw();
+  box.valore=function(){return lista.slice();};
+  return box;}
 var PEOPLE='https://people.googleapis.com/v1/', gTok=null, gClient=null;
 function fmtPhone(v){var d=(v||'').replace(/[^\d+]/g,'');if(d.indexOf('0039')===0)d='+39'+d.slice(4);
   if(/^3\d{9}$/.test(d))d='+39'+d;if(/^0\d{5,11}$/.test(d))d='+39'+d;
@@ -494,12 +590,11 @@ function zonaImposta(sel,z){if(![].some.call(sel.options,function(o){return o.va
 function openNewClient(){
   if(!window.GOOGLE_CLIENT_ID){toast('Manca l\'ID client Google in config.js',true);return;}
   loadGis().catch(function(){});
-  var st={place:null,prod:{},sig:{},pag:{},omaggio:false,token:null,timer:null};
+  var st={place:null,prod:{},pag:{},token:null,timer:null},sigEd=sigilliEditor([]),condEd=condizioniEditor([]);
   function chipRow(list,obj){return el('div',{cls:'chips'},list.map(function(v){var b=el('button',{cls:'chip',type:'button',text:v,onclick:function(){obj[v]=!obj[v];b.classList.toggle('on',!!obj[v]);}});return b;}));}
   function field(id,ph,type){return el('input',{cls:'fi sm',id:id,placeholder:ph,type:type||'text',autocomplete:'off'});}
   var q=field('nc-q','Nome del locale e comune, es. Bar Roma Schio'),sugg=el('div',{}),box=el('div',{}),err=el('div',{cls:'ferr'});
   var zsel=zonaSelect('nc-zona','');
-  var omg=el('button',{cls:'chip',type:'button',text:'🎁 Omaggio',onclick:function(){st.omaggio=!st.omaggio;omg.classList.toggle('on',st.omaggio);}});
   var bSenza=el('button',{cls:'chip',type:'button',text:'📦 Non ha un locale (spedizioni, indirizzo sconosciuto)',onclick:function(){st.senza=!st.senza;bSenza.classList.toggle('on',st.senza);
     q.disabled=st.senza;sugg.innerHTML='';box.innerHTML='';if(st.senza){st.place=null;q.value='';}}});
   var save=el('button',{cls:'sbtn',style:'background:var(--orange);color:#fff;width:100%;margin-top:16px',text:'Salva in rubrica e sulla mappa'});
@@ -536,9 +631,9 @@ function openNewClient(){
       el('div',{cls:'flbl',text:'Referente'}),field('nc-ref','Nome della persona'),
       el('div',{cls:'flbl',text:'Telefono *'}),field('nc-tel','es. 333 123 4567','tel'),
       el('div',{cls:'flbl',text:'Prodotti'}),chipRow(PRODOTTI,st.prod),
-      el('div',{cls:'flbl',text:'Sigilli (niente = neutri)'}),chipRow(SIGILLI,st.sig),el('div',{cls:'chips',style:'margin-top:6px'},[omg]),
+      el('div',{cls:'flbl',text:'Sigilli (niente = neutri)'}),sigEd,
       el('div',{cls:'flbl',text:'Pagamento'}),chipRow(PAGAMENTI,st.pag),
-      el('div',{cls:'flbl',text:'Condizioni (facoltative, una per riga)'}),el('textarea',{cls:'fi sm',id:'nc-cond',rows:'2',placeholder:'es. 10 L + 1 L omaggio · sconto 5% · prezzo L 20 €'}),
+      el('div',{cls:'flbl',text:'Condizioni (omaggi, sconti, prezzi, spedizione)'}),condEd,
       el('div',{cls:'flbl',text:'Altro (note libere)'}),el('textarea',{cls:'fi sm',id:'nc-altro',rows:'2',placeholder:'es. vuole le veline 25x37'}),
       el('div',{cls:'flbl',text:'Ragione sociale · P.IVA · SDI · Codice fiscale (facoltativi)'}),field('nc-az','Ragione sociale'),
       el('div',{style:'display:flex;gap:8px;margin-top:6px'},[field('nc-piva','P.IVA'),field('nc-sdi','SDI')]),
@@ -551,10 +646,9 @@ function openNewClient(){
     var miss=[];if(!st.place&&!st.senza)miss.push('scegli il locale dai suggerimenti di Google Maps (o "Non ha un locale")');if(!comune&&!st.senza)miss.push('comune');if(!locale)miss.push(st.senza?'nome (come vuoi vederlo in rubrica)':'nome del locale');if(!tel)miss.push('telefono');
     if(miss.length){err.textContent='Manca: '+miss.join(', ');return;}
     var dati={comune:comune,locale:locale,ref:ref,tel:tel,az:v('nc-az'),piva:v('nc-piva').replace(/\s/g,''),sdi:v('nc-sdi').toUpperCase(),altro:v('nc-altro'),zona:zsel.value,
-      cond:condDaTesto(v('nc-cond')),cf:cfNorm(v('nc-cf')),
-      prod:PRODOTTI.filter(function(x){return st.prod[x];}),sig:SIGILLI.filter(function(x){return st.sig[x];}).map(function(x){return x+(st.omaggio?' (omaggio)':'');}),
+      cond:condEd.valore(),cf:cfNorm(v('nc-cf')),
+      prod:PRODOTTI.filter(function(x){return st.prod[x];}),sig:sigEd.valore(),
       pag:PAGAMENTI.filter(function(x){return st.pag[x];}),place:st.place,senza:!!st.senza};
-    if(st.omaggio&&!dati.sig.length){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
     if(!cfValido(dati.cf)){err.textContent='Codice fiscale non valido: 16 lettere e numeri (persona) o 11 cifre (ditta).';return;}
     save.disabled=true;save.textContent='Accesso a Google…';
     function go(){
@@ -694,7 +788,7 @@ function referenteDa(p,rubrica,vecchio){
   var note=(p.biographies||[]).map(function(b){return b.value||'';}).join('\n'),o=(p.organizations||[])[0]||{};
   var tel=(p.phoneNumbers||[]).map(function(t){return fmtPhone(t.value);}).filter(function(v,i,a){return v&&a.indexOf(v)===i;});
   var r={nome:(vecchio&&vecchio.nome)||'',telefoni:tel,contatto:riga,resourceName:(vecchio&&vecchio.resourceName)||p.resourceName,rubrica:(vecchio&&vecchio.rubrica)||rubrica,
-    prodotti:righeNota(note,'Prodotti').map(function(v){return canon(v,PRODOTTI);}),sigilli:righeNota(note,'Sigilli').map(function(v){return canon(v,SIGILLI);}),
+    prodotti:righeNota(note,'Prodotti').map(function(v){return canon(v,PRODOTTI);}),sigilli:righeNota(note,'Sigilli').map(sigCanon),
     pagamento:righeNota(note,'Pagamento').map(function(v){return canon(v,PAGAMENTI);}),note:altroNota(note),condizioni:condNota(note),
     azienda:o.name||'',piva:(o.title||'').replace(/^P\.?\s*IVA\s*/i,''),sdi:(o.department||'').replace(/^SDI\s*/i,''),cf:cfDi(p)};
   var f=cdato(p,'framezzino_id');if(f&&f.id){r.id=f.id;r.copie={};if(f.jacopo)r.copie.jacopo=f.jacopo;if(f.marco)r.copie.marco=f.marco;}
@@ -1160,22 +1254,29 @@ function correggiPosizione(c,onPos){
 // Modifica con piu' referenti dello stesso locale: ognuno tiene i suoi prodotti/sigilli/note, si applicano solo
 // le differenze scelte nel modulo (aggiunto / tolto / omaggio cambiato / pezzi di "Altro" aggiunti o tolti)
 function pezziAltro(s){return (s||'').split(/\s+\/\s+|\n/).map(function(x){return x.trim();}).filter(Boolean);}
-function modificheScelte(v,v0,altroPrima,altroOra,condPrima,condOra){
+// sigilli (28/11, come DeliverySync): una voce per tipo; si confrontano per tipo: tolto, aggiunto o cambiato (colori, omaggio)
+function modificheScelte(v,v0,altroPrima,altroOra,condPrima,condOra,sigPrima,sigOra){
   function d(a,b){return {piu:Object.keys(a).filter(function(x){return a[x]&&!b[x];}),meno:Object.keys(b).filter(function(x){return b[x]&&!a[x];})};}
-  var pp=pezziAltro(altroPrima),po=pezziAltro(altroOra),r={prod:d(v.prod,v0.prod),sig:d(v.sig,v0.sig),pag:d(v.pag,v0.pag),
-    omaggio:v.omaggio!==v0.omaggio?v.omaggio:null,omaggioOra:v.omaggio,altroCambiato:altroPrima!==altroOra,altroOra:altroOra,
+  var pp=pezziAltro(altroPrima),po=pezziAltro(altroOra),r={prod:d(v.prod,v0.prod),pag:d(v.pag,v0.pag),
+    altroCambiato:altroPrima!==altroOra,altroOra:altroOra,
     altroPiu:po.filter(function(x){return pp.indexOf(x)<0;}),altroMeno:pp.filter(function(x){return po.indexOf(x)<0;})};
   var cp=condPrima||[],co=condOra||[];r.condOra=co;r.condCambiato=cp.join('\n')!==co.join('\n');
   r.condPiu=co.filter(function(x){return cp.indexOf(x)<0;});r.condMeno=cp.filter(function(x){return co.indexOf(x)<0;});
-  r.nota=r.altroCambiato||r.condCambiato||r.omaggio!==null||['prod','sig','pag'].some(function(k){return r[k].piu.length||r[k].meno.length;});
+  var sp={},so={};(sigPrima||[]).forEach(function(x){sp[sigChiave(x)]=x;});(sigOra||[]).forEach(function(x){so[sigChiave(x)]=x;});
+  r.sig={meno:Object.keys(sp).filter(function(k){return !(k in so);}),nuovi:Object.keys(so).filter(function(k){return !(k in sp);}),cambia:{}};
+  Object.keys(so).forEach(function(k){if(sp[k]!==so[k])r.sig.cambia[k]=so[k];});
+  r.sigOra=(sigOra||[]).slice();r.sigCambiato=r.sig.meno.length>0||Object.keys(r.sig.cambia).length>0||(sigPrima||[]).join('\n')!==(sigOra||[]).join('\n');
+  r.nota=r.altroCambiato||r.condCambiato||r.sigCambiato||['prod','pag'].some(function(k){return r[k].piu.length||r[k].meno.length;});
   return r;}
 function valPer(p,dif){var n=notaDi(p);
   function applica(lista,dd){var out=lista.filter(function(x,i){return dd.meno.indexOf(x)<0&&lista.indexOf(x)===i;});
     dd.piu.forEach(function(x){if(out.indexOf(x)<0)out.push(x);});return out;}
-  var om=/\s*\(omaggio\)$/i,sig=[],basi=[];
-  tutteRighe(n,'Sigilli').forEach(function(x){x=canon(x,SIGILLI);var o=om.test(x),b=x.replace(om,'');
-    if(dif.sig.meno.indexOf(b)>=0||basi.indexOf(b)>=0)return;if(dif.omaggio!==null)o=dif.omaggio;basi.push(b);sig.push(b+(o?' (omaggio)':''));});
-  dif.sig.piu.forEach(function(b){if(basi.indexOf(b)<0){basi.push(b);sig.push(b+(dif.omaggioOra?' (omaggio)':''));}});
+  var sig=[],chiavi=[];
+  if(dif.unico&&dif.sigCambiato)sig=dif.sigOra.slice();  // un referente solo: come nel riquadro
+  else{tutteRighe(n,'Sigilli').forEach(function(x){x=sigCanon(x);var k=sigChiave(x);
+      if(dif.sig.meno.indexOf(k)>=0||chiavi.indexOf(k)>=0)return;chiavi.push(k);sig.push(k in dif.sig.cambia?dif.sig.cambia[k]:x);});
+    // tipi aggiunti adesso: a tutti i referenti; tipi cambiati (colori, omaggio): solo a chi li aveva gia'
+    dif.sig.nuovi.forEach(function(k){if(chiavi.indexOf(k)<0){chiavi.push(k);sig.push(dif.sig.cambia[k]);}});}
   var altro=altroNota(n)[0]||'';
   if(dif.altroCambiato){if(dif.unico)altro=dif.altroOra;else{var pz=pezziAltro(altro).filter(function(x){return dif.altroMeno.indexOf(x)<0;});
     dif.altroPiu.forEach(function(x){if(pz.indexOf(x)<0)pz.push(x);});altro=pz.join(' / ');}}
@@ -1246,10 +1347,10 @@ function aggiungiReferente(c,miei,gs,nome,tel,st){
 function formModifica(c,miei,gs){
   var mieiRn={};miei.forEach(function(p){mieiRn[p.resourceName]=p;});
   var altri=(c.referenti||[]).filter(function(r){return !rnsRef(r).some(function(k){return mieiRn[k];});});
-  var v={prod:{},sig:{},pag:{},omaggio:false},altro=[],org={az:'',piva:'',sdi:''};
+  var v={prod:{},pag:{}},altro=[],org={az:'',piva:'',sdi:''},sigVoci=[];
   miei.forEach(function(p){var n=notaDi(p);
     tutteRighe(n,'Prodotti').forEach(function(x){v.prod[canon(x,PRODOTTI)]=1;});
-    tutteRighe(n,'Sigilli').forEach(function(x){x=canon(x,SIGILLI);if(/\s*\(omaggio\)$/i.test(x)){v.omaggio=true;x=x.replace(/\s*\(omaggio\)$/i,'');}v.sig[x]=1;});
+    tutteRighe(n,'Sigilli').forEach(function(x){x=sigCanon(x);if(!sigVoci.some(function(y){return sigChiave(y)===sigChiave(x);}))sigVoci.push(x);});
     tutteRighe(n,'Pagamento').forEach(function(x){v.pag[canon(x,PAGAMENTI)]=1;});
     altroNota(n).forEach(function(x){if(altro.indexOf(x)<0)altro.push(x);});
     var o=(p.organizations||[])[0]||{};if(!org.az&&o.name)org.az=o.name;
@@ -1258,16 +1359,15 @@ function formModifica(c,miei,gs){
   var cond=[],cf='';miei.forEach(function(p){condNota(notaDi(p)).forEach(function(x){if(cond.indexOf(x)<0)cond.push(x);});if(!cf)cf=cfDi(p);});
   var cond0=cond.slice();
   // com'era all'apertura: al salvataggio si scrive in ogni referente SOLO quello che e' stato cambiato
-  var v0={prod:Object.assign({},v.prod),sig:Object.assign({},v.sig),pag:Object.assign({},v.pag),omaggio:v.omaggio},altro0=altro.join(' / ');
+  var v0={prod:Object.assign({},v.prod),pag:Object.assign({},v.pag)},altro0=altro.join(' / ');
+  var sigEd=sigilliEditor(sigVoci),sig0=sigEd.valore(),condEd=condizioniEditor(cond);
   function righe(lista,obj){var tutte=lista.concat(Object.keys(obj).filter(function(x){return lista.indexOf(x)<0;}));
     return el('div',{cls:'chips'},tutte.map(function(x){var b=el('button',{cls:'chip'+(obj[x]?' on':''),type:'button',text:x,onclick:function(){obj[x]=!obj[x];b.classList.toggle('on',!!obj[x]);}});return b;}));}
   function campo(ph,val){var i=el('input',{cls:'fi sm',placeholder:ph,autocomplete:'off'});i.value=val||'';return i;}
   var st={place:null};
   var fLocale=campo('Nome del locale',c.locale),zsel=zonaSelect('md-zona',c.zona),box=el('div',{}),err=el('div',{cls:'ferr'});
-  var omg=el('button',{cls:'chip'+(v.omaggio?' on':''),type:'button',text:'🎁 Omaggio',onclick:function(){v.omaggio=!v.omaggio;omg.classList.toggle('on',v.omaggio);}});
   var fAltro=el('textarea',{cls:'fi sm',rows:'2',placeholder:'note libere'});fAltro.value=altro.join(' / ');
   var fAz=campo('Ragione sociale',org.az),fPiva=campo('P.IVA',org.piva),fSdi=campo('SDI',org.sdi),fCf=campo('Codice fiscale',cf);
-  var fCond=el('textarea',{cls:'fi sm',rows:String(Math.min(5,Math.max(2,cond.length))),placeholder:'una per riga, es. 10 L + 1 L omaggio · sconto 5% · prezzo L 20 € · spedizione gratis'});fCond.value=cond.join('\n');
   // ＋ Aggiungi referente (contatto nuovo per la persona, stesso locale)
   var stR={},fNomeR=campo('Nome della persona',''),fTelR=el('input',{cls:'fi sm',type:'tel',placeholder:'Telefono, es. 333 123 4567',autocomplete:'off'}),errR=el('div',{cls:'ferr'});
   var bR=el('button',{cls:'act main',type:'button',style:'width:100%;justify-content:center;margin-top:8px',text:'＋ Aggiungi questo referente'});
@@ -1295,9 +1395,9 @@ function formModifica(c,miei,gs){
       info.length?el('p',{cls:'msub',style:'margin-top:0',text:info.join(' ')}):null,
       miei.length?el('div',{},[
         el('div',{cls:'flbl',style:'margin-top:0',text:'Prodotti'}),righe(PRODOTTI,v.prod),
-        el('div',{cls:'flbl',text:'Sigilli (niente = neutri)'}),righe(SIGILLI,v.sig),el('div',{cls:'chips',style:'margin-top:6px'},[omg]),
+        el('div',{cls:'flbl',text:'Sigilli (niente = neutri)'}),sigEd,
         el('div',{cls:'flbl',text:'Pagamento'}),righe(PAGAMENTI,v.pag),
-        el('div',{cls:'flbl',text:'Condizioni (omaggi, sconti, prezzi, spedizione) — una per riga'}),fCond,
+        el('div',{cls:'flbl',text:'Condizioni (omaggi, sconti, prezzi, spedizione)'}),condEd,
         el('div',{cls:'flbl',text:'Altro (note libere)'}),fAltro,
         el('div',{cls:'flbl',text:'Ragione sociale · P.IVA · SDI · Codice fiscale'}),fAz,el('div',{style:'display:flex;gap:8px;margin-top:6px'},[fPiva,fSdi]),el('div',{style:'margin-top:6px'},[fCf])]):null,
       el('div',{cls:'flbl',text:'Referenti (un contatto per persona)'}),apriR,boxR,
@@ -1312,8 +1412,7 @@ function formModifica(c,miei,gs){
     err.textContent='';var ora=oraIso(),pid=c.placeId||c.id,locale=fLocale.value.trim()||c.locale,zona=zsel.value,pl=st.place;
     var cambiaLoc=!!pl&&(pl.id!==pid||!!c.posManuale),cambiaZona=zona!==c.zona,cambiaNome=locale!==c.locale;
     var pos=cambiaLoc?null:st.pos,cambiaPos=!!pos;  // 📍 posizione corretta a mano (scegliere un locale di Google la toglie)
-    if(v.omaggio&&!Object.keys(v.sig).some(function(x){return v.sig[x];})){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
-    var dif=modificheScelte(v,v0,altro0,fAltro.value.trim(),cond0,condDaTesto(fCond.value));dif.unico=miei.length===1;
+    var dif=modificheScelte(v,v0,altro0,fAltro.value.trim(),cond0,condEd.valore(),sig0,sigEd.valore());dif.unico=miei.length===1;
     var cfNuovo=cfNorm(fCf.value),cambiaCf=cfNuovo!==cfNorm(cf);
     if(!cfValido(cfNuovo)){err.textContent='Codice fiscale non valido: 16 lettere e numeri (persona) o 11 cifre (ditta).';return;}
     var orgNuova=orgNorm({az:fAz.value,piva:fPiva.value,sdi:fSdi.value}),orgPrima=orgNorm(org),cambiaOrg=JSON.stringify(orgNuova)!==JSON.stringify(orgPrima);
@@ -1495,9 +1594,9 @@ var GUIDA=[
     'Senza «Tram» davanti il contatto resta personale: niente mappa, non passa all\'altro, nessun avviso.']],
   ['Le note: una riga per tipo',[
     'Prodotti: S, M, L, Magnum, XXL, Rettangolari, Panini, Toast, Tostoni, Maxi tostoni, Galaxy, Club, Veline, Sacchetti',
-    'Sigilli: Personalizzati, Colorati, Smile, Produzione propria, Produzione artigianale. «(omaggio)» solo se sono regalati. Neutri = niente riga.',
+    'Sigilli (come in DeliverySync, senza i kit): Informativi (Vegano, Vegetariano, Senza lattosio, Senza glutine), Produzione propria e artigianale, Grafici (Carnevale, Pasqua, Estivi, Halloween, Natale, Smile, Colorati), Personalizzati. Con il colore se serve: «Produzione propria verde», «Colorati verde + rosso», «… misti», «Personalizzati a 3 colori». «(omaggio)» solo se sono regalati. Neutri = niente riga. In ＋ Nuovo e ✏️ Modifica: «＋ Aggiungi sigilli».',
     'Pagamento: Bonifico, Contrassegno, PayPal, Spedizione, RiBa',
-    'Condizioni: omaggi, sconti, prezzi speciali, spedizione, separati da «;». Es. «Condizioni: 10 L + 1 L omaggio; sconto 5%; prezzo L 20 €; spedizione gratis». Si vedono nella scheda e si cambiano in ✏️ Modifica (una per riga).',
+    'Condizioni: omaggi, sconti, prezzi speciali, spedizione, separati da «;». Es. «Condizioni: 10 L + 1 L omaggio; sconto 5%; prezzo L 20 €; spedizione gratis». Si vedono nella scheda; in ＋ Nuovo e ✏️ Modifica «＋ Aggiungi condizione» (come in DeliverySync), ✕ per toglierne una.',
     'Altro: tutto il resto (prezzi, orari, «ex …», altre persone). Esempio: «Prodotti: L, Maxi tostoni» poi a capo «Sigilli: Personalizzati (omaggio)».',
     'Mai i prodotti nel nome. «Tostoni» e «Maxi tostoni» sono due prodotti diversi.']],
   ['Il 🔄 e i «Da decidere»',[
