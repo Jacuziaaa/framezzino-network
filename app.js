@@ -497,17 +497,17 @@ function sigCanon(t){var r=sigVoce(t);return r?sigScrivi(r):String(t||'').trim()
 function sigChiave(t){var r=sigVoce(t);return r?r.tipo:String(t||'').trim();}       // un tipo = una voce nella scheda
 function sigFiltro(t){var r=sigVoce(t);return r?r.tipo+(r.om?' (omaggio)':''):String(t||'').trim();}  // filtri e statistiche
 // voci dello stesso tipo unite in una sola (review 28/11): colori insieme («Colorati verde» + «Colorati rosso» = «Colorati
-// verde + rosso»), «misti» solo se nessuna ha colori, numero di colori dei Personalizzati se scritto, «(omaggio)» solo se
-// lo erano tutte. Le voci fuori catalogo restano com'erano. Cosi' un contatto ha un tipo una volta sola e niente si perde.
+// verde + rosso»), «misti» solo se nessuna ha colori, numero di colori dei Personalizzati se scritto, «(omaggio)» se lo e'
+// almeno una. Le voci fuori catalogo restano com'erano. Cosi' un contatto ha un tipo una volta sola e niente si perde.
 function sigUnisci(voci){var per={},out=[];
   (voci||[]).forEach(function(v){var t=String(v||'').trim(),r=sigVoce(t);if(!t)return;
     if(!r){if(out.indexOf(t)<0)out.push(t);return;}
     var a=per[r.tipo];if(!a){per[r.tipo]={tipo:r.tipo,colori:r.colori.slice(),misti:r.misti,ncol:r.ncol,om:r.om,pos:out.length};out.push(null);return;}
-    r.colori.forEach(function(c){if(a.colori.indexOf(c)<0)a.colori.push(c);});a.misti=a.misti||r.misti;a.ncol=a.ncol||r.ncol;a.om=a.om&&r.om;});
+    r.colori.forEach(function(c){if(a.colori.indexOf(c)<0)a.colori.push(c);});a.misti=a.misti||r.misti;a.ncol=a.ncol||r.ncol;a.om=a.om||r.om;});
   Object.keys(per).forEach(function(k){var a=per[k];if(a.colori.length)a.misti=false;out[a.pos]=sigScrivi(a);});
   return out;}
 // riquadro dei sigilli (＋ Nuovo e Modifica): come in DeliverySync, senza i kit. box.valore() = voci per la scheda
-function sigilliEditor(voci,note){
+function sigilliEditor(voci){
   var righe=[],vecchi=[],aperto=false,box=el('div',{});
   (voci||[]).forEach(function(v){var r=sigVoce(v),t=String(v||'').trim();if(r){if(!righe.some(function(x){return x.tipo===r.tipo;}))righe.push(r);}else if(t&&vecchi.indexOf(t)<0)vecchi.push(t);});
   function bott(t,on,col,fn){return el('button',{cls:'chip'+(on&&!col?' on':''),type:'button',text:t,style:col?'border-color:'+col+(on?';background:'+col+';color:#fff':''):null,onclick:fn});}
@@ -522,7 +522,6 @@ function sigilliEditor(voci,note){
       if(!r.colori.length&&!r.misti)kids.push(el('div',{cls:'msub',style:'margin:4px 0 0',text:'Un colore, più colori (kit divisi) o «Misti». Se non si sa, lascia vuoto.'}));}
     if(r.tipo==='Personalizzati')kids.push(el('div',{cls:'chips',style:'margin-top:6px;align-items:center'},[el('span',{cls:'msub',style:'margin:0',text:'Colori:'})]
       .concat([1,2,3,4,5,6].map(function(n){return bott(String(n),r.ncol===n,'#334155',function(){r.ncol=r.ncol===n?0:n;draw();});}))));
-    if(note&&note[r.tipo])kids.push(el('div',{cls:'msub',style:'margin:4px 0 0;font-size:11px',text:'👥 '+note[r.tipo]}));
     return el('div',{style:'border:1.5px solid var(--border);border-radius:12px;padding:8px 10px;margin-bottom:6px;background:var(--surface)'},kids);}
   function draw(){box.innerHTML='';
     righe.forEach(function(r,i){box.appendChild(riga(r,i));});
@@ -1272,7 +1271,8 @@ function pezziAltro(s){return (s||'').split(/\s+\/\s+|\n/).map(function(x){retur
 // sigilli (28/11, come DeliverySync): una voce per tipo; si confrontano per tipo: tolto, aggiunto o cambiato (colori, omaggio)
 function modificheScelte(v,v0,altroPrima,altroOra,condPrima,condOra,sigPrima,sigOra){
   function d(a,b){return {piu:Object.keys(a).filter(function(x){return a[x]&&!b[x];}),meno:Object.keys(b).filter(function(x){return b[x]&&!a[x];})};}
-  var pp=pezziAltro(altroPrima),po=pezziAltro(altroOra),r={prod:d(v.prod,v0.prod),pag:d(v.pag,v0.pag),
+  function ora(o){return Object.keys(o).filter(function(x){return o[x];});}
+  var pp=pezziAltro(altroPrima),po=pezziAltro(altroOra),r={prod:d(v.prod,v0.prod),pag:d(v.pag,v0.pag),prodOra:ora(v.prod),pagOra:ora(v.pag),
     altroCambiato:altroPrima!==altroOra,altroOra:altroOra,
     altroPiu:po.filter(function(x){return pp.indexOf(x)<0;}),altroMeno:pp.filter(function(x){return po.indexOf(x)<0;})};
   var cp=condPrima||[],co=condOra||[];r.condOra=co;r.condCambiato=cp.join('\n')!==co.join('\n');
@@ -1284,22 +1284,12 @@ function modificheScelte(v,v0,altroPrima,altroOra,condPrima,condOra,sigPrima,sig
   r.nota=r.altroCambiato||r.condCambiato||r.sigCambiato||['prod','pag'].some(function(k){return r[k].piu.length||r[k].meno.length;});
   return r;}
 function valPer(p,dif){var n=notaDi(p);
-  function applica(lista,dd){var out=lista.filter(function(x,i){return dd.meno.indexOf(x)<0&&lista.indexOf(x)===i;});
-    dd.piu.forEach(function(x){if(out.indexOf(x)<0)out.push(x);});return out;}
-  var sig=[],chiavi=[];
-  if(dif.unico&&dif.sigCambiato)sig=dif.sigOra.slice();  // un referente solo: come nel riquadro
-  else{sigUnisci(tutteRighe(n,'Sigilli').map(sigCanon)).forEach(function(x){var k=sigChiave(x);
-      if(dif.sig.meno.indexOf(k)>=0||chiavi.indexOf(k)>=0)return;chiavi.push(k);sig.push(k in dif.sig.cambia?dif.sig.cambia[k]:x);});
-    // tipi aggiunti adesso: a tutti i referenti; tipi cambiati (colori, omaggio): solo a chi li aveva gia'
-    dif.sig.nuovi.forEach(function(k){if(chiavi.indexOf(k)<0){chiavi.push(k);sig.push(dif.sig.cambia[k]);}});}
+  // DATI DEL LOCALE (Jacopo 28/11: il cliente e' uno, i referenti sono solo le persone del locale): sigilli, prodotti,
+  // pagamento e condizioni sono uguali per tutti i referenti, come nel riquadro. Solo «Altro» resta della persona.
   var altro=altroNota(n)[0]||'';
   if(dif.altroCambiato){if(dif.unico)altro=dif.altroOra;else{var pz=pezziAltro(altro).filter(function(x){return dif.altroMeno.indexOf(x)<0;});
     dif.altroPiu.forEach(function(x){if(pz.indexOf(x)<0)pz.push(x);});altro=pz.join(' / ');}}
-  var cond=condNota(n);
-  if(dif.condCambiato){if(dif.unico)cond=dif.condOra.slice();else{cond=cond.filter(function(x){return dif.condMeno.indexOf(x)<0;});
-    dif.condPiu.forEach(function(x){if(cond.indexOf(x)<0)cond.push(x);});}}
-  return {prodotti:applica(tutteRighe(n,'Prodotti').map(function(x){return canon(x,PRODOTTI);}),dif.prod),
-    pagamento:applica(tutteRighe(n,'Pagamento').map(function(x){return canon(x,PAGAMENTI);}),dif.pag),sigilli:sig,altro:altro,condizioni:cond};}
+  return {prodotti:dif.prodOra.slice(),pagamento:dif.pagOra.slice(),sigilli:dif.sigOra.slice(),altro:altro,condizioni:dif.condOra.slice()};}
 // dati fiscali confrontati "puliti" (spazi, P.I./P.IVA, SDI minuscolo): niente scritture se non sono cambiati davvero
 function orgNorm(o){return {az:(o.az||'').trim().replace(/\s+/g,' '),
   piva:(o.piva||'').replace(/^\s*(P\.?\s*IVA|P\.?\s*I\.?|Partita\s*IVA)\s*:?\s*/i,'').replace(/\s/g,''),
@@ -1359,17 +1349,17 @@ function aggiungiReferente(c,miei,gs,nome,tel,st){
       var n=ricomponi(c,(c.referenti||[]).concat([ref]),null);
       return salvaScheda(c._id,n).then(function(){return c._id;},function(e){throw new Error('Salvato in rubrica ma non sulla mappa: '+permMsg(e));});});
 }
-// nome breve del referente (per le scritte in Modifica): quello della scheda, se no il nome in rubrica senza «Tram Comune Locale»
-function nomeRefDi(c,p){var r=(c.referenti||[]).find(function(x){return rnsRef(x).indexOf(p.resourceName)>=0;});if(r&&r.nome)return r.nome;
-  var d=((((p.names||[])[0]||{}).displayName)||'').replace(/^\s*(tram|tam)\s+/i,'');
-  [c.comune,c.locale].forEach(function(x){if(x&&d.toLowerCase().indexOf(x.toLowerCase()+' ')===0)d=d.slice(x.length+1);});return d.trim()||'?';}
+// dati del locale scritti nella nota di un referente (per vedere se i referenti sono allineati)
+function chiaveLocale(p){var n=notaDi(p);
+  return JSON.stringify([tutteRighe(n,'Prodotti').map(function(x){return canon(x,PRODOTTI);}).sort(),sigUnisci(tutteRighe(n,'Sigilli').map(sigCanon)).sort(),
+    tutteRighe(n,'Pagamento').map(function(x){return canon(x,PAGAMENTI);}).sort(),condNota(n).slice().sort()]);}
 function formModifica(c,miei,gs){
   var mieiRn={};miei.forEach(function(p){mieiRn[p.resourceName]=p;});
   var altri=(c.referenti||[]).filter(function(r){return !rnsRef(r).some(function(k){return mieiRn[k];});});
-  var v={prod:{},pag:{}},altro=[],org={az:'',piva:'',sdi:''},sigTutte=[],sigPer=[];
+  var v={prod:{},pag:{}},altro=[],org={az:'',piva:'',sdi:''},sigTutte=[];
   miei.forEach(function(p){var n=notaDi(p),mie=sigUnisci(tutteRighe(n,'Sigilli').map(sigCanon));
     tutteRighe(n,'Prodotti').forEach(function(x){v.prod[canon(x,PRODOTTI)]=1;});
-    sigTutte=sigTutte.concat(mie);sigPer.push({nome:nomeRefDi(c,p),voci:mie});
+    sigTutte=sigTutte.concat(mie);
     tutteRighe(n,'Pagamento').forEach(function(x){v.pag[canon(x,PAGAMENTI)]=1;});
     altroNota(n).forEach(function(x){if(altro.indexOf(x)<0)altro.push(x);});
     var o=(p.organizations||[])[0]||{};if(!org.az&&o.name)org.az=o.name;
@@ -1379,15 +1369,10 @@ function formModifica(c,miei,gs){
   var cond0=cond.slice();
   // com'era all'apertura: al salvataggio si scrive in ogni referente SOLO quello che e' stato cambiato
   var v0={prod:Object.assign({},v.prod),pag:Object.assign({},v.pag)},altro0=altro.join(' / ');
-  var sigVoci=sigUnisci(sigTutte),sigNote={};
-  // piu' referenti con sigilli diversi (review 28/11): sotto il tipo «Solo Anna» o «Anna: … · Bruno: …» (cambiandolo,
-  // cambia solo per chi ce l'ha; un tipo aggiunto va a tutti)
-  if(sigPer.length>1)sigVoci.forEach(function(x){var k=sigChiave(x),chi=[];
-    sigPer.forEach(function(r){var m=r.voci.find(function(y){return sigChiave(y)===k;});if(m)chi.push({nome:r.nome,voce:m});});
-    var diverse=chi.some(function(y){return y.voce!==chi[0].voce;});
-    if(diverse)sigNote[k]=(chi.length<sigPer.length?'Solo ':'')+chi.map(function(y){return y.nome+': '+y.voce;}).join(' · ');
-    else if(chi.length<sigPer.length)sigNote[k]='Solo '+chi.map(function(y){return y.nome;}).join(', ');});
-  var sigEd=sigilliEditor(sigVoci,sigNote),sig0=sigEd.valore(),condEd=condizioniEditor(cond);
+  // riquadri = dati del locale (tutto quello che hanno i referenti, unito). Se i referenti avevano dati diversi, salvando
+  // diventano uguali per tutti (Jacopo 28/11)
+  var sigEd=sigilliEditor(sigUnisci(sigTutte)),sig0=sigEd.valore(),condEd=condizioniEditor(cond);
+  var allinea=miei.length>1&&miei.some(function(p){return chiaveLocale(p)!==chiaveLocale(miei[0]);});
   function righe(lista,obj){var tutte=lista.concat(Object.keys(obj).filter(function(x){return lista.indexOf(x)<0;}));
     return el('div',{cls:'chips'},tutte.map(function(x){var b=el('button',{cls:'chip'+(obj[x]?' on':''),type:'button',text:x,onclick:function(){obj[x]=!obj[x];b.classList.toggle('on',!!obj[x]);}});return b;}));}
   function campo(ph,val){var i=el('input',{cls:'fi sm',placeholder:ph,autocomplete:'off'});i.value=val||'';return i;}
@@ -1421,7 +1406,8 @@ function formModifica(c,miei,gs){
     el('div',{cls:'mbody'},[
       info.length?el('p',{cls:'msub',style:'margin-top:0',text:info.join(' ')}):null,
       miei.length?el('div',{},[
-        el('div',{cls:'flbl',style:'margin-top:0',text:'Prodotti'}),righe(PRODOTTI,v.prod),
+        allinea?el('p',{cls:'msub',style:'margin-top:0',text:'👥 I referenti avevano prodotti, sigilli, pagamento o condizioni diversi: qui sotto ci sono tutti. Salvando diventano uguali per tutti i referenti del locale.'}):null,
+        el('div',{cls:'flbl',style:allinea?null:'margin-top:0',text:'Prodotti'}),righe(PRODOTTI,v.prod),
         el('div',{cls:'flbl',text:'Sigilli (niente = neutri)'}),sigEd,
         el('div',{cls:'flbl',text:'Pagamento'}),righe(PAGAMENTI,v.pag),
         el('div',{cls:'flbl',text:'Condizioni (omaggi, sconti, prezzi, spedizione)'}),condEd,
@@ -1439,7 +1425,7 @@ function formModifica(c,miei,gs){
     err.textContent='';var ora=oraIso(),pid=c.placeId||c.id,locale=fLocale.value.trim()||c.locale,zona=zsel.value,pl=st.place;
     var cambiaLoc=!!pl&&(pl.id!==pid||!!c.posManuale),cambiaZona=zona!==c.zona,cambiaNome=locale!==c.locale;
     var pos=cambiaLoc?null:st.pos,cambiaPos=!!pos;  // 📍 posizione corretta a mano (scegliere un locale di Google la toglie)
-    var dif=modificheScelte(v,v0,altro0,fAltro.value.trim(),cond0,condEd.valore(),sig0,sigEd.valore());dif.unico=miei.length===1;
+    var dif=modificheScelte(v,v0,altro0,fAltro.value.trim(),cond0,condEd.valore(),sig0,sigEd.valore());dif.unico=miei.length===1;if(allinea)dif.nota=true;
     var cfNuovo=cfNorm(fCf.value),cambiaCf=cfNuovo!==cfNorm(cf);
     if(!cfValido(cfNuovo)){err.textContent='Codice fiscale non valido: 16 lettere e numeri (persona) o 11 cifre (ditta).';return;}
     var orgNuova=orgNorm({az:fAz.value,piva:fPiva.value,sdi:fSdi.value}),orgPrima=orgNorm(org),cambiaOrg=JSON.stringify(orgNuova)!==JSON.stringify(orgPrima);
