@@ -234,10 +234,12 @@ function applyFilters(refit){
   document.getElementById('fdot').classList.toggle('on',n>0);
   segnaEx();renderList();renderMarkers();if(refit)fitAll();
 }
-// tasto "Ex clienti" sulla mappa (27/11): scelta tra nascosti / insieme ai clienti / solo gli ex
-function segnaEx(){var b=document.getElementById('exbtn');if(!b)return;var n=(S.ex||[]).length;
-  b.textContent=S.exMode==='solo'?'🗂️ Solo ex clienti ('+n+')':(S.exMode==='insieme'?'🗂️ Ex clienti: visibili ('+n+')':'🗂️ Ex clienti'+(n?' ('+n+')':''));
-  b.classList.toggle('on',S.exMode!=='no');}
+// "Ex clienti" (27/11): scelta tra nascosti / insieme ai clienti / solo gli ex. Dal 28/11 non e' piu' un tasto sulla
+// mappa ma una riga del menu ☰ (exEtichetta); segnaEx resta per un eventuale tasto e non fa niente se manca
+function exEtichetta(){var n=(S.ex||[]).length;
+  return S.exMode==='solo'?'🗂️ Ex clienti: solo loro ('+n+')':(S.exMode==='insieme'?'🗂️ Ex clienti: visibili ('+n+')':'🗂️ Ex clienti'+(n?' ('+n+')':''));}
+function segnaEx(){var b=document.getElementById('exbtn');if(!b)return;
+  b.textContent=exEtichetta();b.classList.toggle('on',S.exMode!=='no');}
 function openExMode(){
   var n=(S.ex||[]).length;
   function scelta(v,t,msg){return el('button',{cls:'act'+(S.exMode===v?' main':''),type:'button',style:'justify-content:flex-start;width:100%;margin-top:8px',text:(S.exMode===v?'✓ ':'')+t,
@@ -1430,7 +1432,7 @@ function conAltro(nota,testo){var r=(nota||'').split('\n').filter(function(x){re
 function gruppoEx(gs){var g=gs.find(function(x){return x.name===EX_GRUPPO;});if(g)return Promise.resolve(g.resourceName);
   return papi('contactGroups','POST',{contactGroup:{name:EX_GRUPPO}}).then(function(n){gs.push({name:EX_GRUPPO,resourceName:n.resourceName,groupType:'USER_CONTACT_GROUP'});return n.resourceName;});}
 function exCliente(c,miei,gs,btn){
-  if(!window.confirm('«'+c.locale+'» non è più cliente?\n\nNon si cancella niente: resta in rubrica (tua e, al prossimo giro del cloud, dell\'altro) come «Ex Tram …», con l\'etichetta «'+EX_GRUPPO+'» e «Ex cliente dal …» nelle note, ed esce dalla mappa.\n\nSe torna cliente: tasto «🗂️ Ex clienti» sulla mappa → toccalo → «↩ Ripristina come cliente».'))return;
+  if(!window.confirm('«'+c.locale+'» non è più cliente?\n\nNon si cancella niente: resta in rubrica (tua e, al prossimo giro del cloud, dell\'altro) come «Ex Tram …», con l\'etichetta «'+EX_GRUPPO+'» e «Ex cliente dal …» nelle note, ed esce dalla mappa.\n\nSe torna cliente: menu ☰ → «🗂️ Ex clienti» → mostrali → toccalo → «↩ Ripristina come cliente».'))return;
   btn.disabled=true;btn.textContent='Salvo…';
   var oggi=new Date().toLocaleDateString('it-IT'),perId={};gs.forEach(function(g){perId[g.resourceName]=g.name;});
   gruppoEx(gs).then(function(gid){
@@ -1508,7 +1510,7 @@ var GUIDA=[
     'Scheda del locale → ✏️ Modifica: prodotti, sigilli, pagamento, condizioni, note, ditta e codice fiscale, nome, locale e zona. Va in rubrica e sulla mappa; all\'altro arriva al giro del cloud (o subito con «Sistema la rubrica»).',
     'Un\'altra persona dello stesso locale: Modifica → «＋ Aggiungi referente» (nome e telefono). Diventa un contatto suo «Tram Comune Locale Nome», con i dati del locale.',
     'Non è più cliente: Modifica → 🚫 Non è più cliente. Non si cancella: resta in rubrica come «Ex Tram …» (etichetta «Ex clienti Framezzino») ed esce dalla mappa. Passa anche all\'altro.',
-    'Vedere gli ex clienti: tasto «🗂️ Ex clienti» sulla mappa → nascosti, insieme ai clienti (pallini grigi «ex») o solo loro. Tocca un ex cliente → «↩ Ripristina come cliente» (torna nei clienti e nella sua zona, anche per l\'altro). Anche da 🔄 → Ex clienti.',
+    'Vedere gli ex clienti: menu ☰ → «🗂️ Ex clienti» → nascosti, insieme ai clienti (pallini grigi «ex») o solo loro. Tocca un ex cliente → «↩ Ripristina come cliente» (torna nei clienti e nella sua zona, anche per l\'altro). Anche da 🔄 → Ex clienti.',
     'Eliminare davvero: Modifica (o la scheda dell\'ex cliente) → 🗑️ Elimina definitivamente, con due conferme. Sparisce anche all\'altro e dalla mappa; resta 30 giorni nel cestino di Google Contatti.',
     'Clienti senza locale: 🔄 → «📦 … senza locale»: telefono, WhatsApp e «📍 Metti sulla mappa».']],
   ['Attenzione',[
@@ -1581,6 +1583,7 @@ document.getElementById('mbtn').addEventListener('click',function(){
       el('button',{cls:'act',style:'justify-content:flex-start',text:'📥 Importa / aggiorna clienti da file',onclick:function(){document.getElementById('fileimp').click();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'❓ Come si usa',onclick:function(){closeOv();openGuida();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🗺️ Mostra tutti sulla mappa',onclick:function(){S.f={zone:{},prod:{},sig:{},pag:{}};S.q='';document.getElementById('search').value='';applyFilters(true);closeOv();}}),
+      el('button',{cls:'act',style:'justify-content:flex-start',text:exEtichetta(),onclick:function(){closeOv();openExMode();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🔑 Cambia password di cifratura',onclick:openRekey}),
       el('button',{cls:'act',style:'justify-content:flex-start;color:var(--red)',text:'↩ Esci',onclick:function(){if(!window.confirm('Vuoi uscire? La chiave di cifratura verrà rimossa da questo dispositivo.'))return;
         if(unsub)unsub();if(unsubMeta)unsubMeta();if(unsubEx)unsubEx();S.key=null;S.clients=[];S.ex=[];gTok=null;try{localStorage.removeItem('fn_gtok');sessionStorage.removeItem('fn_gtok');localStorage.removeItem('fn_dd_n');}catch(e){}
@@ -1647,4 +1650,3 @@ function finisciRekey(refs){  // ripetibile senza danni: riscrive solo dove c'e'
   Promise.all(refs.map(function(ref){return ref.get().then(function(s){return s.data()&&s.data().dn?{ref:ref,dn:s.data().dn}:null;});}))
   .then(function(l){return aBlocchi(l.filter(Boolean),function(b,x){b.update(x.ref,{d:x.dn,dn:FV.delete(),aggiornato:now,da:S.user.email});});})
   .catch(function(){});}
-document.getElementById('exbtn').addEventListener('click',function(e){e.stopPropagation();openExMode();});
