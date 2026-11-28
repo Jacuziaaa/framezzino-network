@@ -199,8 +199,33 @@ function initMap(){
   }).catch(function(e){mapMsg(e.message==='nokey'?'Manca la chiave Google Maps (config.js).':'Impossibile caricare Google Maps: '+e.message);});
 }
 function mapMsg(t){var m=document.getElementById('mapmsg');m.textContent=t;m.style.display='flex';}
-function pin(c){var col=c._ex?'#94a3b8':(zoneColor[c.zona]||'#f97316');  // ex cliente: grigio con scritto "ex"
-  var pe=new google.maps.marker.PinElement(Object.assign({background:col,borderColor:'#ffffff',glyphColor:'#ffffff',scale:S.sel===c._id?1.25:1},c._ex?{glyph:'ex'}:{}));return pe.element;}
+function pin(c){var col=c._ex?'#94a3b8':(zoneColor[c.zona]||'#f97316'),chk=!c._ex&&telDaControllareDi(c).length>0;  // ex cliente: grigio con scritto "ex"
+  var pe=new google.maps.marker.PinElement(Object.assign({background:col,borderColor:chk?'#dc2626':'#ffffff',glyphColor:'#ffffff',scale:S.sel===c._id?1.25:1},
+    c._ex?{glyph:'ex'}:(chk?{glyph:puntoRosso()}:{})));return pe.element;}  // «!» rosso con il bordo rosso = numero da controllare (28/11)
+function puntoRosso(){var g=document.createElement('div');g.textContent='!';
+  g.style.cssText='width:15px;height:15px;border-radius:50%;background:#dc2626;color:#fff;font:900 12px/15px DM Sans,sans-serif;text-align:center';return g;}
+// NUMERI DA CONTROLLARE (28/11, Jacopo): numeri dei referenti incompleti o sbagliati («348 419 945», «2», «,») segnati sul
+// pallino («!» con il bordo rosso), nell'elenco, nella scheda e nel menu ☰ («⚠️ Numeri da controllare»). Non serve toglierli
+// a mano: si corregge il numero in rubrica e al 🔄 la scheda si aggiorna e l'avviso sparisce. Numeri esteri: solo se troppo corti.
+var RX_TEL_OK=/^\+39 (3\d{2} \d{3} \d{3,4}|0\d{1,3} \d{3,8})$/;
+function telDaControllare(t,estero){var v=(t||'').trim(),d=v.replace(/[^\d+]/g,''),n=d.replace(/\D/g,'');
+  if(n.length<6)return true;
+  if(estero||/^\+(?!39)/.test(d))return false;
+  return !RX_TEL_OK.test(fmtPhone(v));}
+function telDaControllareDi(c){var out=[];(c.referenti||[]).forEach(function(r){(r.telefoni||[]).forEach(function(t){
+  if(telDaControllare(t,c.zona==='Fuori zona'))out.push({ref:r,tel:t});});});return out;}
+function rnMio(r){return (r.copie&&r.copie[accountMio()])||r.resourceName;}  // il contatto nella MIA rubrica (link a Google Contatti)
+function linkContatto(r){return 'https://contacts.google.com/person/'+String(rnMio(r)||'').split('/').pop();}
+function openDaControllare(){
+  var l=S.clients.map(function(c){return {c:c,x:telDaControllareDi(c)};}).filter(function(y){return y.x.length;})
+    .sort(function(a,b){return (a.c.locale||'').localeCompare(b.c.locale||'');});
+  openOv([el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:'⚠️ Numeri da controllare'}),el('div',{cls:'msub',text:l.length?l.length+(l.length===1?' locale':' locali')+' con un numero incompleto o sbagliato':'Nessuno'})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
+    el('div',{cls:'mbody'},[el('p',{cls:'msub',style:'margin-top:0',text:'Correggi il numero in rubrica (dal telefono o con «Apri in Google Contatti»), poi 🔄: l\'avviso sparisce da solo.'})]
+      .concat(l.map(function(y){return el('div',{cls:'ref'},[el('div',{cls:'refn',text:y.c.locale}),
+        el('div',{cls:'refc',text:y.x.map(function(z){return (nomeRef(z.ref,y.c)||'Referente')+': «'+z.tel+'»';}).join(' · ')+' · '+(y.c.comune||'')}),
+        el('div',{cls:'acts'},[el('button',{cls:'act main',type:'button',text:'📍 Apri la scheda',onclick:function(){closeOv();setTimeout(function(){openDetail(y.c._id,true);},250);}}),
+          el('a',{cls:'act',href:linkContatto(y.x[0].ref),target:'_blank',rel:'noopener',text:'✏️ Apri in Google Contatti'})])]);})))]);
+}
 // cosa si vede (mappa ed elenco): i clienti filtrati, e gli ex clienti se scelto con il tasto "Ex clienti"
 function visibili(){return S.exMode==='solo'?S.exF:(S.exMode==='insieme'?S.filtered.concat(S.exF):S.filtered);}
 function renderMarkers(){
@@ -268,7 +293,7 @@ function renderList(){
     var km=S.sort==='vicino'&&S.me?' · '+dist(S.me,c).toFixed(1)+' km':'';
     L.appendChild(el('div',{cls:'row'+(S.sel===c._id?' sel':'')+(c._ex?' exrow':''),onclick:function(){openDetail(c._id,true);}},[
       el('span',{cls:'zdot',style:'background:'+(c._ex?'#94a3b8':(zoneColor[c.zona]||'#f97316'))}),
-      el('div',{style:'min-width:0'},[el('div',{cls:'rname',text:c.locale+(c._ex?' · ex cliente':'')}),el('div',{cls:'rsub',text:(c._ex?'ex cliente'+(c.exDal?' dal '+c.exDal:'')+' · ':'')+(c.comune||'')+' · '+c.zona+km+(refs?' · '+refs:'')}),
+      el('div',{style:'min-width:0'},[el('div',{cls:'rname',text:(!c._ex&&telDaControllareDi(c).length?'⚠️ ':'')+c.locale+(c._ex?' · ex cliente':'')}),el('div',{cls:'rsub',text:(c._ex?'ex cliente'+(c.exDal?' dal '+c.exDal:'')+' · ':'')+(c.comune||'')+' · '+c.zona+km+(refs?' · '+refs:'')}),
         el('div',{cls:'pills'},(c.prodotti||[]).slice(0,5).map(function(p){return el('span',{cls:'pill p',text:p});}).concat((c.sigilli||[]).map(function(s){return el('span',{cls:'pill s',text:/^s[iì](\s|$)/i.test(s)?'Sigilli':'Sigilli '+s.toLowerCase()});})))])]));
   });
   if(!arr.length&&S.clients.length)L.appendChild(el('div',{style:'padding:30px;text-align:center;color:var(--muted);font-size:13px',text:'Nessun locale con questi filtri'}));
@@ -338,14 +363,19 @@ function openDetail(id,pan){
   var c=S.clients.find(function(x){return x._id===id;})||(S.ex||[]).find(function(x){return x._id===id;});if(!c)return;S.sel=id;renderList();
   if(pan&&map&&c.lat!=null){map.panTo({lat:c.lat,lng:c.lng});if(map.getZoom()<14)map.setZoom(15);}
   if(c._ex){openDetailEx(c);return;}
+  var chk=telDaControllareDi(c),estero=c.zona==='Fuori zona';
   var refs=(c.referenti||[]).map(function(r){
-    var acts=(r.telefoni||[]).map(function(t){return el('div',{cls:'acts'},[el('a',{cls:'act',href:telLink(t),text:'📞 '+t}),isMobile(t)?el('a',{cls:'act wa',href:waLink(t),target:'_blank',rel:'noopener',text:'WhatsApp'}):null]);});
+    var acts=(r.telefoni||[]).map(function(t){var bad=telDaControllare(t,estero);
+      return el('div',{cls:'acts'},[el('a',{cls:'act',href:telLink(t),text:(bad?'⚠️ ':'📞 ')+t}),isMobile(t)&&!bad?el('a',{cls:'act wa',href:waLink(t),target:'_blank',rel:'noopener',text:'WhatsApp'}):null,
+        bad?el('a',{cls:'act',href:linkContatto(r),target:'_blank',rel:'noopener',text:'✏️ Correggi in Google Contatti'}):null]);});
     return el('div',{cls:'ref'},[el('div',{cls:'refn',text:nomeRef(r,c)||'Referente'}),el('div',{cls:'refc',text:'In rubrica: '+r.contatto})].concat(acts));});
   var kv=[];[['Ragione sociale',c.azienda],['P.IVA',c.piva],['Codice fiscale',c.cf],['SDI',c.sdi],['Tel. locale',c.telefonoLocale]].forEach(function(x){if(x[1]){kv.push(el('span',{text:x[0]}));kv.push(el('span',{text:x[1]}));}});
   function chips(arr,cls){return el('div',{cls:'pills'},(arr||[]).map(function(p){return el('span',{cls:'pill '+cls,text:p,style:'font-size:12px;padding:4px 10px'});}));}
   openOv([
     el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:c.locale}),el('div',{cls:'msub',text:(c.comune||'')+(c.provincia?' ('+c.provincia+')':'')+' · Zona '+c.zona})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
     el('div',{cls:'mbody'},[
+      chk.length?el('div',{style:'background:#fef2f2;border:1.5px solid #fca5a5;border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#991b1b;line-height:1.45',
+        text:'⚠️ Da controllare: '+chk.map(function(z){return '«'+z.tel+'» ('+(nomeRef(z.ref,c)||'referente')+')';}).join(', ')+(chk.length===1?' sembra incompleto o sbagliato.':' sembrano incompleti o sbagliati.')+' Correggilo in rubrica, poi 🔄.'}):null,
       el('div',{},[el('div',{cls:'sec',text:c.posManuale?'Indirizzo · 📍 posizione corretta a mano':'Indirizzo verificato'}),el('div',{cls:'addr',text:c.indirizzo}),
         el('div',{cls:'acts'},[el('a',{cls:'act main',href:linkNaviga(c),target:'_blank',rel:'noopener',text:'🧭 Naviga'}),
           /^https:\/\//i.test(c.maps||'')?el('a',{cls:'act',href:c.maps,target:'_blank',rel:'noopener',text:'Scheda Google Maps'}):null,
@@ -1613,12 +1643,14 @@ var GUIDA=[
   ['Il 🔄 e i «Da decidere»',[
     'Il 🔄 legge la tua rubrica e aggiorna la mappa. Il numero rosso sul 🔄 = contatti da decidere; il pallino arancione = mappa non ancora aggiornata da quando hai aperto l\'app.',
     '«Sistema la rubrica e aggiorna la mappa» avvia lo script nel cloud (circa un minuto). Lo script gira anche da solo alle 6:37 e alle 13:23.',
-    'Cliente appena salvato dal telefono e non ancora sulla mappa («in lavorazione»): l\'app lo ricontrolla da sola dopo 1 e dopo 3 minuti e, se serve, rifà il giro nel cloud. Tieni aperta l\'app.',
+    'Cliente appena salvato dal telefono e non ancora sulla mappa («in lavorazione»): l\'app lo ricontrolla da sola dopo 1 minuto (e dopo 3 se serve) e, se serve, rifà il giro nel cloud. Tieni aperta l\'app.',
     'Da decidere: 📍 Sistema qui (scegli il locale, o «Cliente senza locale»), 🗺️ Scegli la zona, possibile doppione → «È un doppione: elimina» oppure «Sono diversi», ✓ Va bene così. Li vedete tutti e due: basta che lo sistemi uno.',
     'Sotto il numero dei locali c\'è quando è stata aggiornata la mappa l\'ultima volta e da chi.']],
   ['Modificare, ex clienti, cancellare',[
     'Scheda del locale → ✏️ Modifica: prodotti, sigilli, pagamento, condizioni, note, ditta e codice fiscale, nome, locale e zona. Va in rubrica e sulla mappa; all\'altro arriva al giro del cloud (o subito con «Sistema la rubrica»).',
+    'Prodotti, sigilli, pagamento, condizioni e note sono del locale: in Modifica sono uguali per tutti i referenti, e salvando vanno a tutti.',
     'Un\'altra persona dello stesso locale: Modifica → «＋ Aggiungi referente» (nome e telefono). Diventa un contatto suo «Tram Comune Locale Nome», con i dati del locale.',
+    'Pallino con «!» e bordo rosso (⚠️ nell\'elenco) = un numero di telefono incompleto o sbagliato. Elenco: menu ☰ → «⚠️ Numeri da controllare». Correggi il numero in rubrica, poi 🔄: l\'avviso sparisce da solo.',
     'Non è più cliente: Modifica → 🚫 Non è più cliente. Non si cancella: resta in rubrica come «Ex Tram …» (etichetta «Ex clienti Framezzino») ed esce dalla mappa. Passa anche all\'altro.',
     'Vedere gli ex clienti: menu ☰ → «🗂️ Ex clienti» → nascosti, insieme ai clienti (pallini grigi «ex») o solo loro. Tocca un ex cliente → «↩ Ripristina come cliente» (torna nei clienti e nella sua zona, anche per l\'altro). Anche da 🔄 → Ex clienti.',
     'Eliminare davvero: Modifica (o la scheda dell\'ex cliente) → 🗑️ Elimina definitivamente, con due conferme. Sparisce anche all\'altro e dalla mappa; resta 30 giorni nel cestino di Google Contatti.',
@@ -1694,6 +1726,8 @@ document.getElementById('mbtn').addEventListener('click',function(){
       el('button',{cls:'act',style:'justify-content:flex-start',text:'❓ Come si usa',onclick:function(){closeOv();openGuida();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🗺️ Mostra tutti sulla mappa',onclick:function(){S.f={zone:{},prod:{},sig:{},pag:{}};S.q='';document.getElementById('search').value='';applyFilters(true);closeOv();}}),
       el('button',{cls:'act',style:'justify-content:flex-start',text:exEtichetta(),onclick:function(){closeOv();openExMode();}}),
+      (function(){var n=S.clients.filter(function(c){return telDaControllareDi(c).length;}).length;
+        return n?el('button',{cls:'act',style:'justify-content:flex-start;color:#b91c1c',text:'⚠️ Numeri da controllare ('+n+')',onclick:function(){closeOv();setTimeout(openDaControllare,250);}}):null;})(),
       el('button',{cls:'act',style:'justify-content:flex-start',text:'🔑 Cambia password di cifratura',onclick:openRekey}),
       el('button',{cls:'act',style:'justify-content:flex-start;color:var(--red)',text:'↩ Esci',onclick:function(){if(!window.confirm('Vuoi uscire? La chiave di cifratura verrà rimossa da questo dispositivo.'))return;
         if(unsub)unsub();if(unsubMeta)unsubMeta();if(unsubEx)unsubEx();S.key=null;S.clients=[];S.ex=[];gTok=null;try{localStorage.removeItem('fn_gtok');sessionStorage.removeItem('fn_gtok');localStorage.removeItem('fn_dd_n');}catch(e){}
