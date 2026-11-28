@@ -20,7 +20,8 @@ var ZCOL=['#f97316','#0ea5e9','#16a87a','#8b5cf6','#e11d48','#ca8a04','#0d9488',
 var S={user:null,key:null,clients:[],filtered:[],sel:null,f:{zone:{},prod:{},sig:{},pag:{}},q:'',sort:'zona',me:null,
   // EX CLIENTI SULLA MAPPA (27/11): schede degli ex clienti (documento cifrato network_meta/ex_clienti, rifatto dal 🔄),
   // mostrate a richiesta: 'no' = nascosti, 'insieme' = con i clienti (pallini grigi), 'solo' = solo gli ex
-  ex:[],exF:[],exLeggibile:true,exMode:(function(){try{return localStorage.getItem('fn_exmode')||'no';}catch(e){return 'no';}})()};
+  ex:[],exF:[],exLeggibile:true,exMode:'no'};  // ex clienti nascosti a ogni apertura (review 28/11: il tasto non e' piu' sulla mappa)
+try{localStorage.removeItem('fn_exmode');}catch(e){}
 var map=null,markers={},clusterer=null,unsub=null,unsubMeta=null,unsubEx=null,zoneColor={};
 var EXDOC=db.collection('network_meta').doc('ex_clienti');
 
@@ -246,7 +247,7 @@ function segnaEx(){var b=document.getElementById('exbtn');if(!b)return;
 function openExMode(){
   var n=(S.ex||[]).length;
   function scelta(v,t,msg){return el('button',{cls:'act'+(S.exMode===v?' main':''),type:'button',style:'justify-content:flex-start;width:100%;margin-top:8px',text:(S.exMode===v?'✓ ':'')+t,
-    onclick:function(){S.exMode=v;try{localStorage.setItem('fn_exmode',v);}catch(e){}closeOv();applyFilters(true);toast(msg);}});}
+    onclick:function(){S.exMode=v;closeOv();applyFilters(true);toast(msg);}});}
   openOv([testata('Ex clienti sulla mappa',n?(n+(n===1?' ex cliente con il locale':' ex clienti con il locale')):'Nessun ex cliente con il locale (si aggiornano con il 🔄)'),
     el('div',{cls:'mbody'},[
       scelta('no','Non mostrarli','Ex clienti nascosti'),
@@ -495,8 +496,18 @@ function sigScrivi(r){var t=r.tipo;
 function sigCanon(t){var r=sigVoce(t);return r?sigScrivi(r):String(t||'').trim();}
 function sigChiave(t){var r=sigVoce(t);return r?r.tipo:String(t||'').trim();}       // un tipo = una voce nella scheda
 function sigFiltro(t){var r=sigVoce(t);return r?r.tipo+(r.om?' (omaggio)':''):String(t||'').trim();}  // filtri e statistiche
+// voci dello stesso tipo unite in una sola (review 28/11): colori insieme («Colorati verde» + «Colorati rosso» = «Colorati
+// verde + rosso»), «misti» solo se nessuna ha colori, numero di colori dei Personalizzati se scritto, «(omaggio)» solo se
+// lo erano tutte. Le voci fuori catalogo restano com'erano. Cosi' un contatto ha un tipo una volta sola e niente si perde.
+function sigUnisci(voci){var per={},out=[];
+  (voci||[]).forEach(function(v){var t=String(v||'').trim(),r=sigVoce(t);if(!t)return;
+    if(!r){if(out.indexOf(t)<0)out.push(t);return;}
+    var a=per[r.tipo];if(!a){per[r.tipo]={tipo:r.tipo,colori:r.colori.slice(),misti:r.misti,ncol:r.ncol,om:r.om,pos:out.length};out.push(null);return;}
+    r.colori.forEach(function(c){if(a.colori.indexOf(c)<0)a.colori.push(c);});a.misti=a.misti||r.misti;a.ncol=a.ncol||r.ncol;a.om=a.om&&r.om;});
+  Object.keys(per).forEach(function(k){var a=per[k];if(a.colori.length)a.misti=false;out[a.pos]=sigScrivi(a);});
+  return out;}
 // riquadro dei sigilli (＋ Nuovo e Modifica): come in DeliverySync, senza i kit. box.valore() = voci per la scheda
-function sigilliEditor(voci){
+function sigilliEditor(voci,note){
   var righe=[],vecchi=[],aperto=false,box=el('div',{});
   (voci||[]).forEach(function(v){var r=sigVoce(v),t=String(v||'').trim();if(r){if(!righe.some(function(x){return x.tipo===r.tipo;}))righe.push(r);}else if(t&&vecchi.indexOf(t)<0)vecchi.push(t);});
   function bott(t,on,col,fn){return el('button',{cls:'chip'+(on&&!col?' on':''),type:'button',text:t,style:col?'border-color:'+col+(on?';background:'+col+';color:#fff':''):null,onclick:fn});}
@@ -511,6 +522,7 @@ function sigilliEditor(voci){
       if(!r.colori.length&&!r.misti)kids.push(el('div',{cls:'msub',style:'margin:4px 0 0',text:'Un colore, più colori (kit divisi) o «Misti». Se non si sa, lascia vuoto.'}));}
     if(r.tipo==='Personalizzati')kids.push(el('div',{cls:'chips',style:'margin-top:6px;align-items:center'},[el('span',{cls:'msub',style:'margin:0',text:'Colori:'})]
       .concat([1,2,3,4,5,6].map(function(n){return bott(String(n),r.ncol===n,'#334155',function(){r.ncol=r.ncol===n?0:n;draw();});}))));
+    if(note&&note[r.tipo])kids.push(el('div',{cls:'msub',style:'margin:4px 0 0;font-size:11px',text:'👥 '+note[r.tipo]}));
     return el('div',{style:'border:1.5px solid var(--border);border-radius:12px;padding:8px 10px;margin-bottom:6px;background:var(--surface)'},kids);}
   function draw(){box.innerHTML='';
     righe.forEach(function(r,i){box.appendChild(riga(r,i));});
@@ -867,7 +879,9 @@ function rileggiNuovi(r){
 function accountMio(){var mia=(SY.rubrica||(function(){try{return localStorage.getItem('fn_rubrica')||'';}catch(e){return '';}})()).toLowerCase();
   return mia==='jacopo'||mia==='marco'?mia:'entrambi';}
 // dopo un 🔄: ricontrollo da solo dopo 1 minuto e poi dopo altri 2 (un 🔄 nuovo ricomincia da capo)
-function programmaRiletture(){clearTimeout(LAV.timer);LAV.gen++;LAV.passi=[6e4,12e4];LAV.giri=0;LAV.attivo=true;
+// (review 28/11) senza clienti in lavorazione una sola rilettura dopo 1 minuto (un cliente appena salvato puo' non
+// essere ancora nell'elenco di Google); la seconda, dopo altri 2 minuti, solo se ce n'e' uno in lavorazione
+function programmaRiletture(lv){clearTimeout(LAV.timer);LAV.gen++;LAV.passi=lv?[6e4,12e4]:[6e4];LAV.giri=0;LAV.attivo=true;LAV.esteso=!!lv;
   var g=LAV.gen;LAV.timer=setTimeout(function(){rileggiDaSola(g);},LAV.passi.shift());}
 function nomeNuovo(x){return '«'+(x.nome||'cliente nuovo')+'»';}
 function rileggiDaSola(g){
@@ -892,6 +906,7 @@ function rileggiDaSola(g){
     if(dec.length)toast((dec.length===1?nomeNuovo(dec[0]):dec.length+' clienti nuovi')+': lo script non ha saputo sistemarlo da solo → 🔄 «Da decidere»',true);
     else if(map.length)toast(map.length===1?nomeNuovo(map[0])+' ora è sulla mappa ✓':map.length+' clienti nuovi ora sono sulla mappa ✓');
     var ms=LAV.passi.shift();
+    if(ms==null&&ora.length&&!LAV.esteso){LAV.esteso=true;ms=12e4;}  // trovato adesso un cliente in lavorazione: ancora una
     if(ms!=null){LAV.timer=setTimeout(function(){rileggiDaSola(g);},ms);return;}
     LAV.attivo=false;
     if(ora.length)toast((ora.length===1?nomeNuovo(ora[0])+' non è':ora.length+' clienti nuovi non sono')+' ancora sulla mappa: riprova 🔄 tra qualche minuto. Se resta così, avvisa Claude.',true);
@@ -1026,7 +1041,7 @@ function aggiornaDaRubrica(daTocco,rilettura){  // rilettura = ricontrollo da so
     if(daTocco||n[0]||n[1]||n[2]||n[3])toast('Mappa aggiornata dalla rubrica ✓'+(n[0]?' · '+n[0]+' locali aggiornati':'')+(n[1]?' · '+n[1]+' tolti':'')+(n[2]?' · '+n[2]+' contatti allineati':'')+(n[3]?' · ex clienti aggiornati':'')+(!n[0]&&!n[1]&&!n[2]&&!n[3]&&!lv?' · niente da cambiare':'')
       +(daTocco&&lv?' · '+tl+': ricontrollo da solo tra 1 minuto (tieni aperta l\'app)':''));
     applyFilters();
-    if(daTocco)programmaRiletture();  // dopo 1 e dopo 3 minuti rilegge da sola (clienti appena salvati, 28/11)
+    if(daTocco)programmaRiletture(lv);  // rilegge da sola dopo 1 minuto (e dopo 3 se c'e' un cliente in lavorazione)
     else if(!rilettura&&lv)toast(tl+': tocca 🔄 → «Sistema la rubrica e aggiorna la mappa»');
     else if(!rilettura&&SY.decidere.length)toast(SY.decidere.length+(SY.decidere.length===1?' contatto da decidere':' contatti da decidere')+': tocca 🔄');
     return true;
@@ -1072,7 +1087,7 @@ function lanciaScript(account,senzaFreno){
 }
 // 🔄 dal pannello: accesso Google (finestra dal tocco), script nel cloud per la MIA rubrica, poi mappa dalla rubrica
 function sistemaEAggiorna(){
-  if(SY.running)return;
+  if(SY.running){toast(SY.fase==='script'?'Un attimo: sto già sistemando la rubrica nel cloud…':'Un attimo: sto già aggiornando la mappa. Riprova tra qualche secondo.');return;}
   var account=accountMio();
   googleToken().then(ghToken).then(function(t){
     if(!t){toast('Script nel cloud non collegato: aggiorno solo la mappa (🔄 → Chiave GitHub per collegarlo).',true);return;}
@@ -1273,7 +1288,7 @@ function valPer(p,dif){var n=notaDi(p);
     dd.piu.forEach(function(x){if(out.indexOf(x)<0)out.push(x);});return out;}
   var sig=[],chiavi=[];
   if(dif.unico&&dif.sigCambiato)sig=dif.sigOra.slice();  // un referente solo: come nel riquadro
-  else{tutteRighe(n,'Sigilli').forEach(function(x){x=sigCanon(x);var k=sigChiave(x);
+  else{sigUnisci(tutteRighe(n,'Sigilli').map(sigCanon)).forEach(function(x){var k=sigChiave(x);
       if(dif.sig.meno.indexOf(k)>=0||chiavi.indexOf(k)>=0)return;chiavi.push(k);sig.push(k in dif.sig.cambia?dif.sig.cambia[k]:x);});
     // tipi aggiunti adesso: a tutti i referenti; tipi cambiati (colori, omaggio): solo a chi li aveva gia'
     dif.sig.nuovi.forEach(function(k){if(chiavi.indexOf(k)<0){chiavi.push(k);sig.push(dif.sig.cambia[k]);}});}
@@ -1324,7 +1339,7 @@ function aggiungiReferente(c,miei,gs,nome,tel,st){
   var mod=miei.find(function(p){var d=cdato(p,'framezzino');return d&&!d.senzaMappa;})||null;
   var dm={locale:c.locale};LOC.forEach(function(k){if(c[k]!=null&&c[k]!=='')dm[k]=c[k];});dm.placeId=c.placeId||c.id;if(c.agg)dm.agg=c.agg;
   var full=('Tram '+(c.comune?c.comune+' ':'')+c.locale+' '+nome).replace(/\s+/g,' ').trim();
-  var note=[];if((c.prodotti||[]).length)note.push('Prodotti: '+c.prodotti.join(', '));if((c.sigilli||[]).length)note.push('Sigilli: '+c.sigilli.join(', '));
+  var note=[];if((c.prodotti||[]).length)note.push('Prodotti: '+c.prodotti.join(', '));if((c.sigilli||[]).length)note.push('Sigilli: '+sigUnisci(c.sigilli).join(', '));
   if((c.pagamento||[]).length)note.push('Pagamento: '+c.pagamento.join(', '));if((c.condizioni||[]).length)note.push('Condizioni: '+c.condizioni.join('; '));
   function pulisci(arr,campi){return (arr||[]).map(function(a){var o={};campi.forEach(function(k){if(a[k])o[k]=a[k];});return o;});}
   var body={names:[{givenName:full}],phoneNumbers:[{value:tel,type:/^\+39 3/.test(tel)?'mobile':'work'}],
@@ -1344,13 +1359,17 @@ function aggiungiReferente(c,miei,gs,nome,tel,st){
       var n=ricomponi(c,(c.referenti||[]).concat([ref]),null);
       return salvaScheda(c._id,n).then(function(){return c._id;},function(e){throw new Error('Salvato in rubrica ma non sulla mappa: '+permMsg(e));});});
 }
+// nome breve del referente (per le scritte in Modifica): quello della scheda, se no il nome in rubrica senza «Tram Comune Locale»
+function nomeRefDi(c,p){var r=(c.referenti||[]).find(function(x){return rnsRef(x).indexOf(p.resourceName)>=0;});if(r&&r.nome)return r.nome;
+  var d=((((p.names||[])[0]||{}).displayName)||'').replace(/^\s*(tram|tam)\s+/i,'');
+  [c.comune,c.locale].forEach(function(x){if(x&&d.toLowerCase().indexOf(x.toLowerCase()+' ')===0)d=d.slice(x.length+1);});return d.trim()||'?';}
 function formModifica(c,miei,gs){
   var mieiRn={};miei.forEach(function(p){mieiRn[p.resourceName]=p;});
   var altri=(c.referenti||[]).filter(function(r){return !rnsRef(r).some(function(k){return mieiRn[k];});});
-  var v={prod:{},pag:{}},altro=[],org={az:'',piva:'',sdi:''},sigVoci=[];
-  miei.forEach(function(p){var n=notaDi(p);
+  var v={prod:{},pag:{}},altro=[],org={az:'',piva:'',sdi:''},sigTutte=[],sigPer=[];
+  miei.forEach(function(p){var n=notaDi(p),mie=sigUnisci(tutteRighe(n,'Sigilli').map(sigCanon));
     tutteRighe(n,'Prodotti').forEach(function(x){v.prod[canon(x,PRODOTTI)]=1;});
-    tutteRighe(n,'Sigilli').forEach(function(x){x=sigCanon(x);if(!sigVoci.some(function(y){return sigChiave(y)===sigChiave(x);}))sigVoci.push(x);});
+    sigTutte=sigTutte.concat(mie);sigPer.push({nome:nomeRefDi(c,p),voci:mie});
     tutteRighe(n,'Pagamento').forEach(function(x){v.pag[canon(x,PAGAMENTI)]=1;});
     altroNota(n).forEach(function(x){if(altro.indexOf(x)<0)altro.push(x);});
     var o=(p.organizations||[])[0]||{};if(!org.az&&o.name)org.az=o.name;
@@ -1360,7 +1379,15 @@ function formModifica(c,miei,gs){
   var cond0=cond.slice();
   // com'era all'apertura: al salvataggio si scrive in ogni referente SOLO quello che e' stato cambiato
   var v0={prod:Object.assign({},v.prod),pag:Object.assign({},v.pag)},altro0=altro.join(' / ');
-  var sigEd=sigilliEditor(sigVoci),sig0=sigEd.valore(),condEd=condizioniEditor(cond);
+  var sigVoci=sigUnisci(sigTutte),sigNote={};
+  // piu' referenti con sigilli diversi (review 28/11): sotto il tipo «Solo Anna» o «Anna: … · Bruno: …» (cambiandolo,
+  // cambia solo per chi ce l'ha; un tipo aggiunto va a tutti)
+  if(sigPer.length>1)sigVoci.forEach(function(x){var k=sigChiave(x),chi=[];
+    sigPer.forEach(function(r){var m=r.voci.find(function(y){return sigChiave(y)===k;});if(m)chi.push({nome:r.nome,voce:m});});
+    var diverse=chi.some(function(y){return y.voce!==chi[0].voce;});
+    if(diverse)sigNote[k]=(chi.length<sigPer.length?'Solo ':'')+chi.map(function(y){return y.nome+': '+y.voce;}).join(' · ');
+    else if(chi.length<sigPer.length)sigNote[k]='Solo '+chi.map(function(y){return y.nome;}).join(', ');});
+  var sigEd=sigilliEditor(sigVoci,sigNote),sig0=sigEd.valore(),condEd=condizioniEditor(cond);
   function righe(lista,obj){var tutte=lista.concat(Object.keys(obj).filter(function(x){return lista.indexOf(x)<0;}));
     return el('div',{cls:'chips'},tutte.map(function(x){var b=el('button',{cls:'chip'+(obj[x]?' on':''),type:'button',text:x,onclick:function(){obj[x]=!obj[x];b.classList.toggle('on',!!obj[x]);}});return b;}));}
   function campo(ph,val){var i=el('input',{cls:'fi sm',placeholder:ph,autocomplete:'off'});i.value=val||'';return i;}
