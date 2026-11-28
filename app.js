@@ -1284,12 +1284,9 @@ function modificheScelte(v,v0,altroPrima,altroOra,condPrima,condOra,sigPrima,sig
   r.nota=r.altroCambiato||r.condCambiato||r.sigCambiato||['prod','pag'].some(function(k){return r[k].piu.length||r[k].meno.length;});
   return r;}
 function valPer(p,dif){var n=notaDi(p);
-  // DATI DEL LOCALE (Jacopo 28/11: il cliente e' uno, i referenti sono solo le persone del locale): sigilli, prodotti,
-  // pagamento e condizioni sono uguali per tutti i referenti, come nel riquadro. Solo «Altro» resta della persona.
-  var altro=altroNota(n)[0]||'';
-  if(dif.altroCambiato){if(dif.unico)altro=dif.altroOra;else{var pz=pezziAltro(altro).filter(function(x){return dif.altroMeno.indexOf(x)<0;});
-    dif.altroPiu.forEach(function(x){if(pz.indexOf(x)<0)pz.push(x);});altro=pz.join(' / ');}}
-  return {prodotti:dif.prodOra.slice(),pagamento:dif.pagOra.slice(),sigilli:dif.sigOra.slice(),altro:altro,condizioni:dif.condOra.slice()};}
+  // DATI DEL LOCALE (Jacopo 28/11: il cliente e' uno, i referenti sono solo le persone del locale): prodotti, sigilli,
+  // pagamento, condizioni e note («Altro») sono uguali per tutti i referenti, come nei riquadri.
+  return {prodotti:dif.prodOra.slice(),pagamento:dif.pagOra.slice(),sigilli:dif.sigOra.slice(),altro:dif.altroOra,condizioni:dif.condOra.slice()};}
 // dati fiscali confrontati "puliti" (spazi, P.I./P.IVA, SDI minuscolo): niente scritture se non sono cambiati davvero
 function orgNorm(o){return {az:(o.az||'').trim().replace(/\s+/g,' '),
   piva:(o.piva||'').replace(/^\s*(P\.?\s*IVA|P\.?\s*I\.?|Partita\s*IVA)\s*:?\s*/i,'').replace(/\s/g,''),
@@ -1331,6 +1328,7 @@ function aggiungiReferente(c,miei,gs,nome,tel,st){
   var full=('Tram '+(c.comune?c.comune+' ':'')+c.locale+' '+nome).replace(/\s+/g,' ').trim();
   var note=[];if((c.prodotti||[]).length)note.push('Prodotti: '+c.prodotti.join(', '));if((c.sigilli||[]).length)note.push('Sigilli: '+sigUnisci(c.sigilli).join(', '));
   if((c.pagamento||[]).length)note.push('Pagamento: '+c.pagamento.join(', '));if((c.condizioni||[]).length)note.push('Condizioni: '+c.condizioni.join('; '));
+  if((c.note||[]).length)note.push('Altro: '+c.note.join(' / '));  // note del cliente: uguali per tutti i referenti (28/11)
   function pulisci(arr,campi){return (arr||[]).map(function(a){var o={};campi.forEach(function(k){if(a[k])o[k]=a[k];});return o;});}
   var body={names:[{givenName:full}],phoneNumbers:[{value:tel,type:/^\+39 3/.test(tel)?'mobile':'work'}],
     biographies:note.length?[{value:note.join('\n'),contentType:'TEXT_PLAIN'}]:[],clientData:[{key:'framezzino',value:JSON.stringify(dm)}],
@@ -1352,7 +1350,7 @@ function aggiungiReferente(c,miei,gs,nome,tel,st){
 // dati del locale scritti nella nota di un referente (per vedere se i referenti sono allineati)
 function chiaveLocale(p){var n=notaDi(p);
   return JSON.stringify([tutteRighe(n,'Prodotti').map(function(x){return canon(x,PRODOTTI);}).sort(),sigUnisci(tutteRighe(n,'Sigilli').map(sigCanon)).sort(),
-    tutteRighe(n,'Pagamento').map(function(x){return canon(x,PAGAMENTI);}).sort(),condNota(n).slice().sort()]);}
+    tutteRighe(n,'Pagamento').map(function(x){return canon(x,PAGAMENTI);}).sort(),condNota(n).slice().sort(),pezziAltro(altroNota(n).join(' / ')).sort()]);}
 function formModifica(c,miei,gs){
   var mieiRn={};miei.forEach(function(p){mieiRn[p.resourceName]=p;});
   var altri=(c.referenti||[]).filter(function(r){return !rnsRef(r).some(function(k){return mieiRn[k];});});
@@ -1361,7 +1359,7 @@ function formModifica(c,miei,gs){
     tutteRighe(n,'Prodotti').forEach(function(x){v.prod[canon(x,PRODOTTI)]=1;});
     sigTutte=sigTutte.concat(mie);
     tutteRighe(n,'Pagamento').forEach(function(x){v.pag[canon(x,PAGAMENTI)]=1;});
-    altroNota(n).forEach(function(x){if(altro.indexOf(x)<0)altro.push(x);});
+    altroNota(n).forEach(function(x){pezziAltro(x).forEach(function(y){if(altro.indexOf(y)<0)altro.push(y);});});  // note di tutti, senza doppioni
     var o=(p.organizations||[])[0]||{};if(!org.az&&o.name)org.az=o.name;
     var pv=(o.title||'').replace(/^P\.?\s*IVA\s*/i,'');if(!org.piva&&/\d{6,}/.test(pv))org.piva=pv;
     var sd=(o.department||'').replace(/^SDI\s*/i,'');if(!org.sdi&&sd)org.sdi=sd;});
@@ -1406,7 +1404,7 @@ function formModifica(c,miei,gs){
     el('div',{cls:'mbody'},[
       info.length?el('p',{cls:'msub',style:'margin-top:0',text:info.join(' ')}):null,
       miei.length?el('div',{},[
-        allinea?el('p',{cls:'msub',style:'margin-top:0',text:'👥 I referenti avevano prodotti, sigilli, pagamento o condizioni diversi: qui sotto ci sono tutti. Salvando diventano uguali per tutti i referenti del locale.'}):null,
+        allinea?el('p',{cls:'msub',style:'margin-top:0',text:'👥 I referenti avevano prodotti, sigilli, pagamento, condizioni o note diversi: qui sotto ci sono tutti. Salvando diventano uguali per tutti i referenti del locale.'}):null,
         el('div',{cls:'flbl',style:allinea?null:'margin-top:0',text:'Prodotti'}),righe(PRODOTTI,v.prod),
         el('div',{cls:'flbl',text:'Sigilli (niente = neutri)'}),sigEd,
         el('div',{cls:'flbl',text:'Pagamento'}),righe(PAGAMENTI,v.pag),
