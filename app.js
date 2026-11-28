@@ -205,7 +205,8 @@ function pin(c){var col=c._ex?'#94a3b8':(zoneColor[c.zona]||'#f97316'),chk=!c._e
 function puntoRosso(){var g=document.createElement('div');g.textContent='!';
   g.style.cssText='width:15px;height:15px;border-radius:50%;background:#dc2626;color:#fff;font:900 12px/15px DM Sans,sans-serif;text-align:center';return g;}
 // NUMERI DA CONTROLLARE (28/11, Jacopo): numeri dei referenti incompleti o sbagliati («348 419 945», «2», «,») segnati sul
-// pallino («!» con il bordo rosso), nell'elenco, nella scheda e nel menu ☰ («⚠️ Numeri da controllare»). Non serve toglierli
+// pallino («!» con il bordo rosso, anche sul gruppo di pallini che lo contiene), nell'elenco, nella scheda, nel menu ☰ e
+// nel pannello del 🔄 («⚠️ Numeri da controllare»), e nel messaggio dopo il 🔄 toccato. Non serve toglierli
 // a mano: si corregge il numero in rubrica e al 🔄 la scheda si aggiorna e l'avviso sparisce. Numeri esteri: solo se troppo corti.
 var RX_TEL_OK=/^\+39 (3\d{2} \d{3} \d{3,4}|0\d{1,3} \d{3,8})$/;
 function telDaControllare(t,estero){var v=(t||'').trim(),d=v.replace(/[^\d+]/g,''),n=d.replace(/\D/g,'');
@@ -234,12 +235,16 @@ function renderMarkers(){
   Object.keys(markers).forEach(function(k){markers[k].map=null;});markers={};
   var arr=visibili().filter(function(c){return c.lat!=null;}).map(function(c){
     var m=new google.maps.marker.AdvancedMarkerElement({position:{lat:c.lat,lng:c.lng},content:pin(c),title:c.locale+(c._ex?' (ex cliente)':'')});
+    m._chk=!c._ex&&telDaControllareDi(c).length>0;  // numero da controllare: si vede anche sul gruppo che lo contiene
     m.addListener('click',function(){openDetail(c._id);});markers[c._id]=m;return m;});
   if(window.markerClusterer){
+    // gruppo di pallini: se dentro c'e' un locale con un numero da controllare, bordo rosso e «!» rosso (28/11: prima il
+    // «!» si vedeva solo ingrandendo la mappa fino al pallino)
     clusterer=new markerClusterer.MarkerClusterer({map:map,markers:arr,renderer:{render:function(cl){
-      var n=cl.count,size=n<10?34:n<50?42:52;
-      var d=el('div',{style:'width:'+size+'px;height:'+size+'px;border-radius:50%;background:#f97316;color:#fff;display:flex;align-items:center;justify-content:center;font:800 13px DM Sans,sans-serif;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25)',text:String(n)});
-      return new google.maps.marker.AdvancedMarkerElement({position:cl.position,content:d,zIndex:1000+n});}}});
+      var n=cl.count,size=n<10?34:n<50?42:52,chk=(cl.markers||[]).some(function(m){return m._chk;});
+      var d=el('div',{style:'position:relative;width:'+size+'px;height:'+size+'px;border-radius:50%;background:#f97316;color:#fff;display:flex;align-items:center;justify-content:center;font:800 13px DM Sans,sans-serif;border:3px solid '+(chk?'#dc2626':'#fff')+';box-shadow:0 2px 8px rgba(0,0,0,.25)',text:String(n)});
+      if(chk){var b=puntoRosso();b.style.position='absolute';b.style.top='-6px';b.style.right='-6px';b.style.border='2px solid #fff';d.appendChild(b);}
+      return new google.maps.marker.AdvancedMarkerElement({position:cl.position,content:d,zIndex:1000+n,title:chk?'Qui c\'è un numero da controllare':''});}}});
   }else arr.forEach(function(m){m.map=map;});
 }
 function fitAll(){var v=visibili();if(!map||!v.length)return;var b=new google.maps.LatLngBounds();v.forEach(function(c){if(c.lat!=null)b.extend({lat:c.lat,lng:c.lng});});map.fitBounds(b,60);}
@@ -1067,8 +1072,10 @@ function aggiornaDaRubrica(daTocco,rilettura){  // rilettura = ricontrollo da so
     if(!/[?&]prova\b/.test(location.search))db.collection('network_meta').doc('aggiornamento').set({quando:new Date().toISOString(),chi:SY.rubrica||''}).catch(function(){});
     SY.running=false;segnaSync();
     var lv=(SY.lavorazione||[]).length,tl=lv===1?'1 cliente nuovo in lavorazione':lv+' clienti nuovi in lavorazione';
+    var nk=S.clients.filter(function(c){return telDaControllareDi(c).length;}).length;  // numeri da controllare (28/11)
     if(daTocco||n[0]||n[1]||n[2]||n[3])toast('Mappa aggiornata dalla rubrica ✓'+(n[0]?' · '+n[0]+' locali aggiornati':'')+(n[1]?' · '+n[1]+' tolti':'')+(n[2]?' · '+n[2]+' contatti allineati':'')+(n[3]?' · ex clienti aggiornati':'')+(!n[0]&&!n[1]&&!n[2]&&!n[3]&&!lv?' · niente da cambiare':'')
-      +(daTocco&&lv?' · '+tl+': ricontrollo da solo tra 1 minuto (tieni aperta l\'app)':''));
+      +(daTocco&&lv?' · '+tl+': ricontrollo da solo tra 1 minuto (tieni aperta l\'app)':'')
+      +(daTocco&&nk?' · ⚠️ '+(nk===1?'1 numero da controllare':nk+' numeri da controllare')+' (menu ☰ o pannello 🔄)':''));
     applyFilters();
     if(daTocco)programmaRiletture(lv);  // rilegge da sola dopo 1 minuto (e dopo 3 se c'e' un cliente in lavorazione)
     else if(!rilettura&&lv)toast(tl+': tocca 🔄 → «Sistema la rubrica e aggiorna la mappa»');
@@ -1157,6 +1164,9 @@ function openSync(){
       el('div',{cls:'msub',text:SY.quando?('Ultimo aggiornamento: '+SY.quando.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})+(SY.rubrica?' · rubrica di '+SY.rubrica:'')):'Non ancora aggiornata in questa sessione'})]),
       el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
     el('div',{cls:'mbody'},[btn,chiave,boxCloud(),
+      // 28/11 (Jacopo: «ho fatto la sincronizzazione ma non vedo i contatti coi numeri sbagliati»): anche qui, non solo nel menu ☰
+      (function(){var n=S.clients.filter(function(c){return telDaControllareDi(c).length;}).length;
+        return n?el('button',{cls:'act',type:'button',style:'justify-content:flex-start;margin-top:12px;width:100%;color:#b91c1c',text:'⚠️ Numeri da controllare ('+n+') ›',onclick:function(){closeOv();setTimeout(openDaControllare,250);}}):null;})(),
       el('div',{cls:'sec',style:'margin-top:16px',text:'Da decidere'+(SY.decidere.length?' ('+SY.decidere.length+')':'')}),
       SY.quando?(lista.length?el('div',{},lista):el('div',{cls:'msub',text:'Niente da decidere ✓'})):el('div',{cls:'msub',text:'Aggiorna dalla rubrica per vedere i contatti da decidere.'}),
       lista.length?el('p',{cls:'msub',style:'margin-top:10px',text:'Sono clienti che lo script non ha saputo sistemare da solo (locale non trovato su Google, possibile doppione, zona da scegliere…). Con "📍 Sistema qui" scegli il locale (o "senza locale") e la zona: va in rubrica e sulla mappa. Possibile doppione: "elimina" se è lo stesso cliente, "sono diversi" se sono due clienti diversi. Oppure correggi il contatto in Google Contatti: al prossimo giro lo script lo riprova. Questi avvisi li vedete tutti e due.'}):null,
@@ -1650,7 +1660,7 @@ var GUIDA=[
     'Scheda del locale → ✏️ Modifica: prodotti, sigilli, pagamento, condizioni, note, ditta e codice fiscale, nome, locale e zona. Va in rubrica e sulla mappa; all\'altro arriva al giro del cloud (o subito con «Sistema la rubrica»).',
     'Prodotti, sigilli, pagamento, condizioni e note sono del locale: in Modifica sono uguali per tutti i referenti, e salvando vanno a tutti.',
     'Un\'altra persona dello stesso locale: Modifica → «＋ Aggiungi referente» (nome e telefono). Diventa un contatto suo «Tram Comune Locale Nome», con i dati del locale.',
-    'Pallino con «!» e bordo rosso (⚠️ nell\'elenco) = un numero di telefono incompleto o sbagliato. Elenco: menu ☰ → «⚠️ Numeri da controllare». Correggi il numero in rubrica, poi 🔄: l\'avviso sparisce da solo.',
+    'Pallino con «!» e bordo rosso (⚠️ nell\'elenco) = un numero di telefono incompleto o sbagliato; un gruppo di pallini con il «!» ne contiene almeno uno. Elenco: menu ☰ o pannello 🔄 → «⚠️ Numeri da controllare». Correggi il numero in rubrica, poi 🔄: l\'avviso sparisce da solo.',
     'Non è più cliente: Modifica → 🚫 Non è più cliente. Non si cancella: resta in rubrica come «Ex Tram …» (etichetta «Ex clienti Framezzino») ed esce dalla mappa. Passa anche all\'altro.',
     'Vedere gli ex clienti: menu ☰ → «🗂️ Ex clienti» → nascosti, insieme ai clienti (pallini grigi «ex») o solo loro. Tocca un ex cliente → «↩ Ripristina come cliente» (torna nei clienti e nella sua zona, anche per l\'altro). Anche da 🔄 → Ex clienti.',
     'Eliminare davvero: Modifica (o la scheda dell\'ex cliente) → 🗑️ Elimina definitivamente, con due conferme. Sparisce anche all\'altro e dalla mappa; resta 30 giorni nel cestino di Google Contatti.',
