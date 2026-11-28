@@ -335,7 +335,7 @@ function openDetail(id,pan){
   var refs=(c.referenti||[]).map(function(r){
     var acts=(r.telefoni||[]).map(function(t){return el('div',{cls:'acts'},[el('a',{cls:'act',href:telLink(t),text:'📞 '+t}),isMobile(t)?el('a',{cls:'act wa',href:waLink(t),target:'_blank',rel:'noopener',text:'WhatsApp'}):null]);});
     return el('div',{cls:'ref'},[el('div',{cls:'refn',text:nomeRef(r,c)||'Referente'}),el('div',{cls:'refc',text:'In rubrica: '+r.contatto})].concat(acts));});
-  var kv=[];[['Ragione sociale',c.azienda],['P.IVA',c.piva],['SDI',c.sdi],['Tel. locale',c.telefonoLocale]].forEach(function(x){if(x[1]){kv.push(el('span',{text:x[0]}));kv.push(el('span',{text:x[1]}));}});
+  var kv=[];[['Ragione sociale',c.azienda],['P.IVA',c.piva],['Codice fiscale',c.cf],['SDI',c.sdi],['Tel. locale',c.telefonoLocale]].forEach(function(x){if(x[1]){kv.push(el('span',{text:x[0]}));kv.push(el('span',{text:x[1]}));}});
   function chips(arr,cls){return el('div',{cls:'pills'},(arr||[]).map(function(p){return el('span',{cls:'pill '+cls,text:p,style:'font-size:12px;padding:4px 10px'});}));}
   openOv([
     el('div',{cls:'mhead'},[el('div',{},[el('div',{cls:'mtitle',text:c.locale}),el('div',{cls:'msub',text:(c.comune||'')+(c.provincia?' ('+c.provincia+')':'')+' · Zona '+c.zona})]),el('button',{cls:'mclose',text:'✕',onclick:closeOv})]),
@@ -348,6 +348,7 @@ function openDetail(id,pan){
       (c.prodotti||[]).length?el('div',{},[el('div',{cls:'sec',text:'Prodotti'}),chips(c.prodotti,'p')]):null,
       (c.sigilli||[]).length?el('div',{},[el('div',{cls:'sec',text:'Sigilli'}),chips(c.sigilli,'s')]):null,
       (c.pagamento||[]).length?el('div',{},[el('div',{cls:'sec',text:'Pagamento'}),chips(c.pagamento,'')]):null,
+      (c.condizioni||[]).length?el('div',{},[el('div',{cls:'sec',text:'Condizioni'}),el('div',{cls:'notes',text:c.condizioni.map(function(x){return '• '+x;}).join('\n')})]):null,
       kv.length?el('div',{},[el('div',{cls:'sec',text:'Dati fiscali'}),el('div',{cls:'kv'},kv)]):null,
       (c.note||[]).length?el('div',{},[el('div',{cls:'sec',text:'Note'}),el('div',{cls:'notes',text:c.note.join('\n')})]):null,
       el('div',{cls:'acts',style:'margin-top:4px'},[el('button',{cls:'act',type:'button',text:'✏️ Modifica (rubrica e mappa)',onclick:function(){openModifica(c);}})])
@@ -458,8 +459,8 @@ document.getElementById('stbtn').addEventListener('click',function(){
 // Stesso formato degli script del PC: Nome "Tram Comune Locale", Cognome referente, P.IVA in Qualifica,
 // SDI in Reparto, indirizzo di lavoro, link Maps, note a righe fisse, gruppi "Clienti Framezzino" + zona.
 var PRODOTTI=['S','M','L','Magnum','XXL','Rettangolari','Panini','Toast','Tostoni','Maxi tostoni','Galaxy','Club','Veline','Sacchetti'];
-var SIGILLI=['Personalizzati','Colorati','Smile','Produzione propria'];
-var PAGAMENTI=['Bonifico','Contrassegno','PayPal','Spedizione'];
+var SIGILLI=['Personalizzati','Colorati','Smile','Produzione propria','Produzione artigianale'];  // artigianale: catalogo 27/11
+var PAGAMENTI=['Bonifico','Contrassegno','PayPal','Spedizione','RiBa'];  // RiBa: 28/11
 var PEOPLE='https://people.googleapis.com/v1/', gTok=null, gClient=null;
 function fmtPhone(v){var d=(v||'').replace(/[^\d+]/g,'');if(d.indexOf('0039')===0)d='+39'+d.slice(4);
   if(/^3\d{9}$/.test(d))d='+39'+d;if(/^0\d{5,11}$/.test(d))d='+39'+d;
@@ -535,9 +536,11 @@ function openNewClient(){
       el('div',{cls:'flbl',text:'Prodotti'}),chipRow(PRODOTTI,st.prod),
       el('div',{cls:'flbl',text:'Sigilli (niente = neutri)'}),chipRow(SIGILLI,st.sig),el('div',{cls:'chips',style:'margin-top:6px'},[omg]),
       el('div',{cls:'flbl',text:'Pagamento'}),chipRow(PAGAMENTI,st.pag),
+      el('div',{cls:'flbl',text:'Condizioni (facoltative, una per riga)'}),el('textarea',{cls:'fi sm',id:'nc-cond',rows:'2',placeholder:'es. 10 L + 1 L omaggio · sconto 5% · prezzo L 20 €'}),
       el('div',{cls:'flbl',text:'Altro (note libere)'}),el('textarea',{cls:'fi sm',id:'nc-altro',rows:'2',placeholder:'es. vuole le veline 25x37'}),
-      el('div',{cls:'flbl',text:'Ragione sociale · P.IVA · SDI (facoltativi)'}),field('nc-az','Ragione sociale'),
+      el('div',{cls:'flbl',text:'Ragione sociale · P.IVA · SDI · Codice fiscale (facoltativi)'}),field('nc-az','Ragione sociale'),
       el('div',{style:'display:flex;gap:8px;margin-top:6px'},[field('nc-piva','P.IVA'),field('nc-sdi','SDI')]),
+      el('div',{style:'margin-top:6px'},[field('nc-cf','Codice fiscale')]),
       el('div',{cls:'flbl',text:'Zona'}),zsel,
       err,save])]);
   save.addEventListener('click',function(){
@@ -546,9 +549,11 @@ function openNewClient(){
     var miss=[];if(!st.place&&!st.senza)miss.push('scegli il locale dai suggerimenti di Google Maps (o "Non ha un locale")');if(!comune&&!st.senza)miss.push('comune');if(!locale)miss.push(st.senza?'nome (come vuoi vederlo in rubrica)':'nome del locale');if(!tel)miss.push('telefono');
     if(miss.length){err.textContent='Manca: '+miss.join(', ');return;}
     var dati={comune:comune,locale:locale,ref:ref,tel:tel,az:v('nc-az'),piva:v('nc-piva').replace(/\s/g,''),sdi:v('nc-sdi').toUpperCase(),altro:v('nc-altro'),zona:zsel.value,
+      cond:condDaTesto(v('nc-cond')),cf:cfNorm(v('nc-cf')),
       prod:PRODOTTI.filter(function(x){return st.prod[x];}),sig:SIGILLI.filter(function(x){return st.sig[x];}).map(function(x){return x+(st.omaggio?' (omaggio)':'');}),
       pag:PAGAMENTI.filter(function(x){return st.pag[x];}),place:st.place,senza:!!st.senza};
     if(st.omaggio&&!dati.sig.length){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
+    if(!cfValido(dati.cf)){err.textContent='Codice fiscale non valido: 16 lettere e numeri (persona) o 11 cifre (ditta).';return;}
     save.disabled=true;save.textContent='Accesso a Google…';
     function go(){
       // il numero c'e' gia' in rubrica? (non al nuovo tentativo dopo un errore: il contatto creato prima e' il suo)
@@ -577,12 +582,14 @@ function salvaNuovo(x,st){
   var city=comp(pl,'locality').longText||comp(pl,'administrative_area_level_3').longText||comp(pl,'postal_town').longText;
   var via=comp(pl,'route').longText,num=comp(pl,'street_number').longText;
   var note=[];if(x.prod.length)note.push('Prodotti: '+x.prod.join(', '));if(x.sig.length)note.push('Sigilli: '+x.sig.join(', '));
-  if(x.pag.length)note.push('Pagamento: '+x.pag.join(', '));if(x.altro)note.push('Altro: '+x.altro.replace(/\s*\n\s*/g,' / '));
+  if(x.pag.length)note.push('Pagamento: '+x.pag.join(', '));if((x.cond||[]).length)note.push('Condizioni: '+x.cond.join('; '));
+  if(x.altro)note.push('Altro: '+x.altro.replace(/\s*\n\s*/g,' / '));
   var given='Tram '+x.comune+' '+x.locale, full=(given+' '+x.ref).trim();
   // nome TUTTO su una riga nel campo Nome (regola di Jacopo 12/11): niente cognome
   var body={names:[{givenName:full}],phoneNumbers:[{value:x.tel,type:/^\+39 3/.test(x.tel)?'mobile':'work'}],
     addresses:[{streetAddress:(via+(num?', '+num:'')).trim(),city:city,region:comp(pl,'administrative_area_level_2').shortText,postalCode:comp(pl,'postal_code').longText,country:'Italia',type:'work'}],
-    urls:pl.googleMapsURI?[{value:pl.googleMapsURI.replace(/&.*$/,''),type:'work'}]:[],biographies:note.length?[{value:note.join('\n'),contentType:'TEXT_PLAIN'}]:[]};
+    urls:pl.googleMapsURI?[{value:pl.googleMapsURI.replace(/&.*$/,''),type:'work'}]:[],biographies:note.length?[{value:note.join('\n'),contentType:'TEXT_PLAIN'}]:[],
+    userDefined:x.cf?[{key:CHIAVE_CF,value:x.cf}]:[]};
   if(x.az||x.piva||x.sdi)body.organizations=[{name:x.az,title:x.piva?'P.IVA '+x.piva:'',department:x.sdi?'SDI '+x.sdi:'',type:'work'}];
   // campo nascosto con i dati per la mappa (lo stesso che scrive lo script): la mappa si aggiorna dalla rubrica
   var dm={placeId:pl.id,locale:x.locale,nomeGoogle:pl.displayName||'',comune:city||x.comune,provincia:comp(pl,'administrative_area_level_2').shortText,
@@ -594,7 +601,7 @@ function salvaNuovo(x,st){
   var crea=st&&st.creato?papi(st.creato+'?personFields='+PF).then(function(f){
       body.organizations=body.organizations||[];
       body.clientData=(f.clientData||[]).filter(function(c){return c.key!=='framezzino'&&c.key!=='framezzino_decidere';}).map(function(c){return {key:c.key,value:c.value};}).concat(body.clientData);
-      return contattoAggiorna(f,body,'names,phoneNumbers,addresses,urls,biographies,organizations,clientData');})
+      return contattoAggiorna(f,body,'names,phoneNumbers,addresses,urls,biographies,organizations,clientData,userDefined');})
     :papi('people:createContact?personFields=names','POST',body).then(function(p){if(st)st.creato=p.resourceName;return p;});
   return crea.then(function(p){person=p;
     return papi('contactGroups?pageSize=1000&groupFields=name,groupType');
@@ -605,10 +612,12 @@ function salvaNuovo(x,st){
       return g?g.resourceName:papi('contactGroups','POST',{contactGroup:{name:n}}).then(function(ng){return ng.resourceName;});}));
   }).then(function(ids){
     return Promise.all(ids.map(function(id){return papi(id+'/members:modify','POST',{resourceNamesToAdd:[person.resourceName]});}));
+  }).then(function(){  // versione completa per il 🔄: l'elenco di Google mostra il contatto nuovo in ritardo (28/11)
+    return papi(person.resourceName+'?personFields='+PF).then(function(f){ricordaFresco(f);}).catch(function(){});
   }).then(function(){
     // un pallino per locale: se il locale e' gia' sulla mappa il cliente diventa un referente in piu' della sua scheda
     var ref={nome:x.ref,telefoni:[x.tel],contatto:full,resourceName:person.resourceName,rubrica:rubricaMia()||'',
-      prodotti:x.prod,sigilli:x.sig,pagamento:x.pag,note:x.altro?[x.altro]:[],azienda:x.az,piva:x.piva,sdi:x.sdi};
+      prodotti:x.prod,sigilli:x.sig,pagamento:x.pag,note:x.altro?[x.altro]:[],condizioni:x.cond||[],azienda:x.az,piva:x.piva,sdi:x.sdi,cf:x.cf||''};
     var gia=S.clients.find(function(c){return (c.placeId||c.id)===pl.id;});
     var c=gia?ricomponi(gia,(gia.referenti||[]).concat([ref]),null)
       :ricomponi({id:pl.id,placeId:pl.id,locale:x.locale,nomeGoogle:pl.displayName||'',comune:city||x.comune,
@@ -630,13 +639,15 @@ function numeroGiaInRubrica(tel){var k=ultime9(tel);if(!k)return Promise.resolve
 // (+ zona se scelta), niente pallino sulla mappa (campo nascosto senzaMappa, come "Cliente senza locale" dei Da decidere)
 function salvaSenzaLocale(x,st){
   var note=[];if(x.prod.length)note.push('Prodotti: '+x.prod.join(', '));if(x.sig.length)note.push('Sigilli: '+x.sig.join(', '));
-  if(x.pag.length)note.push('Pagamento: '+x.pag.join(', '));if(x.altro)note.push('Altro: '+x.altro.replace(/\s*\n\s*/g,' / '));
+  if(x.pag.length)note.push('Pagamento: '+x.pag.join(', '));if((x.cond||[]).length)note.push('Condizioni: '+x.cond.join('; '));
+  if(x.altro)note.push('Altro: '+x.altro.replace(/\s*\n\s*/g,' / '));
   var full=('Tram '+(x.comune?x.comune+' ':'')+x.locale+' '+x.ref).replace(/\s+/g,' ').trim();
   var body={names:[{givenName:full}],phoneNumbers:[{value:x.tel,type:/^\+39 3/.test(x.tel)?'mobile':'work'}],
-    biographies:note.length?[{value:note.join('\n'),contentType:'TEXT_PLAIN'}]:[],clientData:[{key:'framezzino',value:JSON.stringify({senzaMappa:true})}]};
+    biographies:note.length?[{value:note.join('\n'),contentType:'TEXT_PLAIN'}]:[],clientData:[{key:'framezzino',value:JSON.stringify({senzaMappa:true})}],
+    userDefined:x.cf?[{key:CHIAVE_CF,value:x.cf}]:[]};
   if(x.az||x.piva||x.sdi)body.organizations=[{name:x.az,title:x.piva?'P.IVA '+x.piva:'',department:x.sdi?'SDI '+x.sdi:'',type:'work'}];
   var crea=st&&st.creato?papi(st.creato+'?personFields='+PF).then(function(f){body.organizations=body.organizations||[];
-      return contattoAggiorna(f,body,'names,phoneNumbers,biographies,organizations,clientData');})
+      return contattoAggiorna(f,body,'names,phoneNumbers,biographies,organizations,clientData,userDefined');})
     :papi('people:createContact?personFields='+PF,'POST',body).then(function(p){if(st)st.creato=p.resourceName;return p;});
   return crea.then(function(p){return gruppiLista().then(function(gs){return gruppiZona(p,x.zona&&x.zona!==ZONA_PROVV?x.zona:null,gs);});})
     .then(function(){return null;});
@@ -682,8 +693,8 @@ function referenteDa(p,rubrica,vecchio){
   var tel=(p.phoneNumbers||[]).map(function(t){return fmtPhone(t.value);}).filter(function(v,i,a){return v&&a.indexOf(v)===i;});
   var r={nome:(vecchio&&vecchio.nome)||'',telefoni:tel,contatto:riga,resourceName:(vecchio&&vecchio.resourceName)||p.resourceName,rubrica:(vecchio&&vecchio.rubrica)||rubrica,
     prodotti:righeNota(note,'Prodotti').map(function(v){return canon(v,PRODOTTI);}),sigilli:righeNota(note,'Sigilli').map(function(v){return canon(v,SIGILLI);}),
-    pagamento:righeNota(note,'Pagamento').map(function(v){return canon(v,PAGAMENTI);}),note:altroNota(note),
-    azienda:o.name||'',piva:(o.title||'').replace(/^P\.?\s*IVA\s*/i,''),sdi:(o.department||'').replace(/^SDI\s*/i,'')};
+    pagamento:righeNota(note,'Pagamento').map(function(v){return canon(v,PAGAMENTI);}),note:altroNota(note),condizioni:condNota(note),
+    azienda:o.name||'',piva:(o.title||'').replace(/^P\.?\s*IVA\s*/i,''),sdi:(o.department||'').replace(/^SDI\s*/i,''),cf:cfDi(p)};
   var f=cdato(p,'framezzino_id');if(f&&f.id){r.id=f.id;r.copie={};if(f.jacopo)r.copie.jacopo=f.jacopo;if(f.marco)r.copie.marco=f.marco;}
   return r;
 }
@@ -698,7 +709,7 @@ function nelVecchioOrdine(nuovi,vecchi,chiave){chiave=chiave||function(x){return
 function ricomponi(c,refs,dm){
   var n={};Object.keys(c).forEach(function(k){if(k!=='_id'&&k!=='_doc')n[k]=c[k];});
   refs=nelVecchioOrdine(refs,c.referenti,function(r){return r.resourceName;});
-  ['prodotti','sigilli','pagamento','note'].forEach(function(k){
+  ['prodotti','sigilli','pagamento','note','condizioni'].forEach(function(k){
     var tutti=[];function add(v){if(v&&tutti.indexOf(v)<0)tutti.push(v);}
     if(refs.some(function(r){return !r[k];}))(c[k]||[]).forEach(add);
     refs.forEach(function(r){(r[k]||[]).forEach(add);});n[k]=nelVecchioOrdine(tutti,c[k]);});
@@ -707,7 +718,7 @@ function ricomponi(c,refs,dm){
   var tipi=n.sigilli.filter(function(s){return !/^s[iì](\s|$)/i.test(s);});
   if(tipi.length)n.sigilli=tipi;
   // se due referenti hanno valori diversi resta quello che la scheda aveva gia' (se uno dei referenti ce l'ha ancora)
-  ['azienda','piva','sdi'].forEach(function(k){var r=refs.find(function(r){return r[k]&&r[k]===c[k];})||refs.find(function(r){return r[k];});if(r)n[k]=r[k];else if(n[k]==null)n[k]='';});
+  ['azienda','piva','sdi','cf'].forEach(function(k){var r=refs.find(function(r){return r[k]&&r[k]===c[k];})||refs.find(function(r){return r[k];});if(r)n[k]=r[k];else if(n[k]==null)n[k]='';});
   if(dm&&!n.lat){['nomeGoogle','comune','provincia','indirizzo','lat','lng','maps','telefonoLocale','zona','posManuale'].forEach(function(k){if(dm[k]!=null)n[k]=dm[k];});
     if(!n.locale)n.locale=dm.locale||dm.nomeGoogle;}
   n.referenti=refs;return n;
@@ -715,7 +726,7 @@ function ricomponi(c,refs,dm){
 function chiaveScheda(c){var o={};Object.keys(c).sort().forEach(function(k){if(k!=='_id'&&k!=='_doc')o[k]=c[k];});return JSON.stringify(o);}
 function leggiRubrica(){
   var all=[];
-  function page(tok){return papi('people/me/connections?pageSize=1000&personFields=names,phoneNumbers,biographies,organizations,memberships,clientData,metadata'
+  function page(tok){return papi('people/me/connections?pageSize=1000&personFields=names,phoneNumbers,biographies,organizations,memberships,clientData,userDefined,metadata'
     +(tok?'&pageToken='+encodeURIComponent(tok):'')).then(function(r){all=all.concat(r.connections||[]);return r.nextPageToken?page(r.nextPageToken):all;});}
   return page(null).then(function(cs){return papi('contactGroups?pageSize=1000&groupFields=name,groupType').then(function(g){return [cs,g.contactGroups||[]];});});
 }
@@ -817,6 +828,10 @@ function aggiornaDaRubrica(daTocco,rilettura){  // rilettura = ricontrollo da so
     contacts=contacts.filter(function(p){var e=elim[p.resourceName];return !(e&&ora-e<9e5);})
       .map(function(p){var f=fr[p.resourceName];  // la versione letta dopo la modifica, se l'elenco ne ha una piu' vecchia
         return f&&ora-f.t<9e5&&aggiornatoIl(f.p)>aggiornatoIl(p)?f.p:p;});
+    // creati dall'app negli ultimi 15 minuti (＋ Nuovo, ＋ Aggiungi referente) e non ancora nell'elenco (28/11): si usano
+    // lo stesso, altrimenti il 🔄 li toglierebbe dalla scheda per qualche minuto
+    var inElenco={};contacts.forEach(function(p){inElenco[p.resourceName]=1;});
+    Object.keys(fr).forEach(function(rn){var f=fr[rn],e=elim[rn];if(!inElenco[rn]&&ora-f.t<9e5&&!(e&&ora-e<9e5))contacts.push(f.p);});
     if(!gid)throw new Error('In questa rubrica non c\'è il gruppo "Clienti Framezzino": hai scelto l\'account Google giusto?');
     // di chi e' questa rubrica: dei referenti gia' sulla mappa (Jacopo / Marco), altrimenti dell'utente dell'app
     var rns={},conta={};contacts.forEach(function(p){rns[p.resourceName]=1;});
@@ -1012,7 +1027,7 @@ function openSync(){
 // ── MODIFICHE DALL'APP (21/11): scheda del locale e "Da decidere" → rubrica Google di chi usa l'app + mappa ──────
 // Si scrive solo nei contatti della PROPRIA rubrica (Google non permette altro). Locale e zona valgono per tutta la
 // scheda: i contatti dell'altra rubrica si allineano da soli al suo 🔄 (vedi aggiornaDaRubrica, campo "agg").
-var PF='names,phoneNumbers,biographies,organizations,memberships,clientData,addresses,urls,metadata';
+var PF='names,phoneNumbers,biographies,organizations,memberships,clientData,userDefined,addresses,urls,metadata';
 // ora dell'ultima modifica di un contatto secondo Google (per scegliere la versione piu' recente, 27/11)
 function aggiornatoIl(p){return ((p&&p.metadata&&p.metadata.sources)||[]).reduce(function(m,s){return s.updateTime&&s.updateTime>m?s.updateTime:m;},'');}
 function oraIso(){return new Date().toISOString();}
@@ -1042,10 +1057,10 @@ function notaDi(p){return (p.biographies||[]).map(function(b){return b.value||''
 // valori di TUTTE le righe "Prodotti:" (o Sigilli/Pagamento) della nota, non solo della prima
 function tutteRighe(note,k){var out=[];(note||'').split('\n').forEach(function(r){if(r.indexOf(k+':')!==0)return;r.slice(k.length+1).split(',').forEach(function(x){x=x.trim();if(x)out.push(x);});});return out;}
 // note a righe fisse (come lo script): Prodotti / Sigilli / Pagamento / righe libere di prima / Altro
-function notaNuova(vecchia,v){var libere=[],inAltro=false;
-  (vecchia||'').split('\n').forEach(function(r){if(/^Altro:/.test(r)){inAltro=true;return;}if(inAltro||/^(Prodotti|Sigilli|Pagamento):/.test(r))return;if(r.trim())libere.push(r.trim());});
+function notaNuova(vecchia,v){var libere=[],inAltro=false,cond=Array.isArray(v.condizioni);  // senza v.condizioni la riga resta com'e'
+  (vecchia||'').split('\n').forEach(function(r){if(/^Altro:/.test(r)){inAltro=true;return;}if(inAltro||/^(Prodotti|Sigilli|Pagamento):/.test(r))return;if(cond&&/^Condizioni:/.test(r))return;if(r.trim())libere.push(r.trim());});
   var out=[];if(v.prodotti.length)out.push('Prodotti: '+v.prodotti.join(', '));if(v.sigilli.length)out.push('Sigilli: '+v.sigilli.join(', '));
-  if(v.pagamento.length)out.push('Pagamento: '+v.pagamento.join(', '));out=out.concat(libere);
+  if(v.pagamento.length)out.push('Pagamento: '+v.pagamento.join(', '));if(cond&&v.condizioni.length)out.push('Condizioni: '+v.condizioni.join('; '));out=out.concat(libere);
   if(v.altro)out.push('Altro: '+v.altro.replace(/\s*\n\s*/g,' / '));return out.join('\n');}
 function comuneDi(pl){return comp(pl,'locality').longText||comp(pl,'administrative_area_level_3').longText||comp(pl,'postal_town').longText;}
 function dmDaPlace(pl,locale,zona){return {placeId:pl.id,locale:locale||pl.displayName||'',nomeGoogle:pl.displayName||'',comune:comuneDi(pl),
@@ -1143,12 +1158,14 @@ function correggiPosizione(c,onPos){
 // Modifica con piu' referenti dello stesso locale: ognuno tiene i suoi prodotti/sigilli/note, si applicano solo
 // le differenze scelte nel modulo (aggiunto / tolto / omaggio cambiato / pezzi di "Altro" aggiunti o tolti)
 function pezziAltro(s){return (s||'').split(/\s+\/\s+|\n/).map(function(x){return x.trim();}).filter(Boolean);}
-function modificheScelte(v,v0,altroPrima,altroOra){
+function modificheScelte(v,v0,altroPrima,altroOra,condPrima,condOra){
   function d(a,b){return {piu:Object.keys(a).filter(function(x){return a[x]&&!b[x];}),meno:Object.keys(b).filter(function(x){return b[x]&&!a[x];})};}
   var pp=pezziAltro(altroPrima),po=pezziAltro(altroOra),r={prod:d(v.prod,v0.prod),sig:d(v.sig,v0.sig),pag:d(v.pag,v0.pag),
     omaggio:v.omaggio!==v0.omaggio?v.omaggio:null,omaggioOra:v.omaggio,altroCambiato:altroPrima!==altroOra,altroOra:altroOra,
     altroPiu:po.filter(function(x){return pp.indexOf(x)<0;}),altroMeno:pp.filter(function(x){return po.indexOf(x)<0;})};
-  r.nota=r.altroCambiato||r.omaggio!==null||['prod','sig','pag'].some(function(k){return r[k].piu.length||r[k].meno.length;});
+  var cp=condPrima||[],co=condOra||[];r.condOra=co;r.condCambiato=cp.join('\n')!==co.join('\n');
+  r.condPiu=co.filter(function(x){return cp.indexOf(x)<0;});r.condMeno=cp.filter(function(x){return co.indexOf(x)<0;});
+  r.nota=r.altroCambiato||r.condCambiato||r.omaggio!==null||['prod','sig','pag'].some(function(k){return r[k].piu.length||r[k].meno.length;});
   return r;}
 function valPer(p,dif){var n=notaDi(p);
   function applica(lista,dd){var out=lista.filter(function(x,i){return dd.meno.indexOf(x)<0&&lista.indexOf(x)===i;});
@@ -1160,8 +1177,11 @@ function valPer(p,dif){var n=notaDi(p);
   var altro=altroNota(n)[0]||'';
   if(dif.altroCambiato){if(dif.unico)altro=dif.altroOra;else{var pz=pezziAltro(altro).filter(function(x){return dif.altroMeno.indexOf(x)<0;});
     dif.altroPiu.forEach(function(x){if(pz.indexOf(x)<0)pz.push(x);});altro=pz.join(' / ');}}
+  var cond=condNota(n);
+  if(dif.condCambiato){if(dif.unico)cond=dif.condOra.slice();else{cond=cond.filter(function(x){return dif.condMeno.indexOf(x)<0;});
+    dif.condPiu.forEach(function(x){if(cond.indexOf(x)<0)cond.push(x);});}}
   return {prodotti:applica(tutteRighe(n,'Prodotti').map(function(x){return canon(x,PRODOTTI);}),dif.prod),
-    pagamento:applica(tutteRighe(n,'Pagamento').map(function(x){return canon(x,PAGAMENTI);}),dif.pag),sigilli:sig,altro:altro};}
+    pagamento:applica(tutteRighe(n,'Pagamento').map(function(x){return canon(x,PAGAMENTI);}),dif.pag),sigilli:sig,altro:altro,condizioni:cond};}
 // dati fiscali confrontati "puliti" (spazi, P.I./P.IVA, SDI minuscolo): niente scritture se non sono cambiati davvero
 function orgNorm(o){return {az:(o.az||'').trim().replace(/\s+/g,' '),
   piva:(o.piva||'').replace(/^\s*(P\.?\s*IVA|P\.?\s*I\.?|Partita\s*IVA)\s*:?\s*/i,'').replace(/\s/g,''),
@@ -1178,6 +1198,49 @@ function openModifica(c){
   }).then(function(z){var visti={};formModifica(c,z[0].filter(function(p){if(!p||visti[p.resourceName])return false;visti[p.resourceName]=1;return true;}),z[1]);})
     .catch(function(e){closeOv();toast(e.message,true);});
 }
+// ── CONDIZIONI e CODICE FISCALE (blocco C, 28/11) ───────────────────────────────────────────────────────
+// Condizioni: riga fissa "Condizioni:" della nota (dopo Pagamento, prima di Altro), piu' condizioni separate da ";"
+// (10 L + 1 L omaggio; sconto 5%; prezzo L 20 €; spedizione gratis...). Servono alla fatturazione di DeliverySync.
+function condNota(note){var out=[];(note||'').split('\n').forEach(function(r){if(r.indexOf('Condizioni:')!==0)return;
+  r.slice(11).split(';').forEach(function(x){x=x.trim();if(x&&out.indexOf(x)<0)out.push(x);});});return out;}
+function condDaTesto(t){var out=[];(t||'').split(/\n|;/).forEach(function(x){x=x.trim();if(x&&out.indexOf(x)<0)out.push(x);});return out;}
+// Codice fiscale: campo personalizzato "Codice fiscale" del contatto (fuori dalle note, come la P.IVA nei dati della
+// ditta); il cloud lo copia uguale nell'altra rubrica (userDefined)
+var CHIAVE_CF='Codice fiscale';
+function eCf(x){return /^codice\s*fiscale$/i.test(((x&&x.key)||'').trim());}
+function cfDi(p){var u=(p.userDefined||[]).find(eCf);return u?(u.value||'').replace(/\s/g,'').toUpperCase():'';}
+function cfNorm(v){return (v||'').replace(/\s/g,'').toUpperCase();}
+function cfValido(v){return !v||/^[A-Z0-9]{16}$/.test(v)||/^\d{11}$/.test(v);}
+function conCf(p,cf){var u=(p.userDefined||[]).filter(function(x){return !eCf(x);}).map(function(x){return {key:x.key,value:x.value};});
+  if(cf)u.push({key:CHIAVE_CF,value:cf});return u;}
+// ＋ AGGIUNGI REFERENTE (28/11): un contatto nuovo per la persona (regola di Jacopo: un referente = un contatto), stesso
+// locale: nome "Tram Comune Locale Nome", dati per la mappa della scheda, indirizzo e link e ditta come un referente
+// della mia rubrica (o dalla scheda), gruppi del cliente e della zona, righe fisse della nota (prodotti, sigilli,
+// pagamento, condizioni) come la scheda. All'altro arriva al giro del cloud (rubrica unica).
+function aggiungiReferente(c,miei,gs,nome,tel,st){
+  var mod=miei.find(function(p){var d=cdato(p,'framezzino');return d&&!d.senzaMappa;})||null;
+  var dm={locale:c.locale};LOC.forEach(function(k){if(c[k]!=null&&c[k]!=='')dm[k]=c[k];});dm.placeId=c.placeId||c.id;if(c.agg)dm.agg=c.agg;
+  var full=('Tram '+(c.comune?c.comune+' ':'')+c.locale+' '+nome).replace(/\s+/g,' ').trim();
+  var note=[];if((c.prodotti||[]).length)note.push('Prodotti: '+c.prodotti.join(', '));if((c.sigilli||[]).length)note.push('Sigilli: '+c.sigilli.join(', '));
+  if((c.pagamento||[]).length)note.push('Pagamento: '+c.pagamento.join(', '));if((c.condizioni||[]).length)note.push('Condizioni: '+c.condizioni.join('; '));
+  function pulisci(arr,campi){return (arr||[]).map(function(a){var o={};campi.forEach(function(k){if(a[k])o[k]=a[k];});return o;});}
+  var body={names:[{givenName:full}],phoneNumbers:[{value:tel,type:/^\+39 3/.test(tel)?'mobile':'work'}],
+    biographies:note.length?[{value:note.join('\n'),contentType:'TEXT_PLAIN'}]:[],clientData:[{key:'framezzino',value:JSON.stringify(dm)}],
+    userDefined:c.cf?[{key:CHIAVE_CF,value:c.cf}]:[]};
+  if(c.zona===ZONA_PROVV)body.clientData.push({key:'framezzino_decidere',value:JSON.stringify({motivo:MOTIVO_ZONA,data:oraIso().slice(0,10)})});
+  if(mod){body.addresses=pulisci(mod.addresses,['streetAddress','extendedAddress','poBox','city','region','postalCode','country','type']);
+    body.urls=pulisci(mod.urls,['value','type']);body.organizations=pulisci(mod.organizations,['name','title','department','type']);}
+  else{body.addresses=c.indirizzo?[{streetAddress:c.indirizzo,city:c.comune||'',type:'work'}]:[];
+    body.urls=c.posManuale&&c.lat!=null?[{value:linkCoord(c.lat,c.lng),type:'work'}]:(/^https:\/\//i.test(c.maps||'')?[{value:c.maps,type:'work'}]:[]);
+    body.organizations=c.azienda||c.piva||c.sdi?[{name:c.azienda||'',title:c.piva?'P.IVA '+c.piva:'',department:c.sdi?'SDI '+c.sdi:'',type:'work'}]:[];}
+  // nuovo tentativo dopo un errore a meta': il contatto c'e' gia' (st.creato) -> niente doppione
+  var crea=st.creato?papi(st.creato+'?personFields='+PF):papi('people:createContact?personFields='+PF,'POST',body).then(function(p){st.creato=p.resourceName;return p;});
+  return crea.then(function(p){return gruppiZona(p,c.zona&&c.zona!==ZONA_PROVV?c.zona:null,gs).then(function(){return papi(p.resourceName+'?personFields='+PF);});})
+    .then(function(np){ricordaFresco(np);  // l'elenco di Google lo mostra in ritardo: il 🔄 usa questa versione
+      var ref=referenteDa(np,rubricaMia()||'',null);ref.nome=nome;
+      var n=ricomponi(c,(c.referenti||[]).concat([ref]),null);
+      return salvaScheda(c._id,n).then(function(){return c._id;},function(e){throw new Error('Salvato in rubrica ma non sulla mappa: '+permMsg(e));});});
+}
 function formModifica(c,miei,gs){
   var mieiRn={};miei.forEach(function(p){mieiRn[p.resourceName]=p;});
   var altri=(c.referenti||[]).filter(function(r){return !rnsRef(r).some(function(k){return mieiRn[k];});});
@@ -1190,6 +1253,8 @@ function formModifica(c,miei,gs){
     var o=(p.organizations||[])[0]||{};if(!org.az&&o.name)org.az=o.name;
     var pv=(o.title||'').replace(/^P\.?\s*IVA\s*/i,'');if(!org.piva&&/\d{6,}/.test(pv))org.piva=pv;
     var sd=(o.department||'').replace(/^SDI\s*/i,'');if(!org.sdi&&sd)org.sdi=sd;});
+  var cond=[],cf='';miei.forEach(function(p){condNota(notaDi(p)).forEach(function(x){if(cond.indexOf(x)<0)cond.push(x);});if(!cf)cf=cfDi(p);});
+  var cond0=cond.slice();
   // com'era all'apertura: al salvataggio si scrive in ogni referente SOLO quello che e' stato cambiato
   var v0={prod:Object.assign({},v.prod),sig:Object.assign({},v.sig),pag:Object.assign({},v.pag),omaggio:v.omaggio},altro0=altro.join(' / ');
   function righe(lista,obj){var tutte=lista.concat(Object.keys(obj).filter(function(x){return lista.indexOf(x)<0;}));
@@ -1199,7 +1264,22 @@ function formModifica(c,miei,gs){
   var fLocale=campo('Nome del locale',c.locale),zsel=zonaSelect('md-zona',c.zona),box=el('div',{}),err=el('div',{cls:'ferr'});
   var omg=el('button',{cls:'chip'+(v.omaggio?' on':''),type:'button',text:'🎁 Omaggio',onclick:function(){v.omaggio=!v.omaggio;omg.classList.toggle('on',v.omaggio);}});
   var fAltro=el('textarea',{cls:'fi sm',rows:'2',placeholder:'note libere'});fAltro.value=altro.join(' / ');
-  var fAz=campo('Ragione sociale',org.az),fPiva=campo('P.IVA',org.piva),fSdi=campo('SDI',org.sdi);
+  var fAz=campo('Ragione sociale',org.az),fPiva=campo('P.IVA',org.piva),fSdi=campo('SDI',org.sdi),fCf=campo('Codice fiscale',cf);
+  var fCond=el('textarea',{cls:'fi sm',rows:String(Math.min(5,Math.max(2,cond.length))),placeholder:'una per riga, es. 10 L + 1 L omaggio · sconto 5% · prezzo L 20 € · spedizione gratis'});fCond.value=cond.join('\n');
+  // ＋ Aggiungi referente (contatto nuovo per la persona, stesso locale)
+  var stR={},fNomeR=campo('Nome della persona',''),fTelR=el('input',{cls:'fi sm',type:'tel',placeholder:'Telefono, es. 333 123 4567',autocomplete:'off'}),errR=el('div',{cls:'ferr'});
+  var bR=el('button',{cls:'act main',type:'button',style:'width:100%;justify-content:center;margin-top:8px',text:'＋ Aggiungi questo referente'});
+  var boxR=el('div',{style:'display:none'},[fNomeR,el('div',{style:'margin-top:6px'},[fTelR]),errR,bR]);
+  var apriR=el('button',{cls:'act',type:'button',style:'width:100%;justify-content:center;margin-top:8px',text:'＋ Aggiungi referente',onclick:function(){boxR.style.display='block';apriR.style.display='none';fNomeR.focus();}});
+  bR.addEventListener('click',function(){var nome=fNomeR.value.trim(),tel=fmtPhone(fTelR.value.trim());errR.textContent='';
+    if(!nome||!tel){errR.textContent='Scrivi il nome della persona e il telefono.';return;}
+    bR.disabled=true;bR.textContent='Controllo il numero…';
+    (stR.creato?Promise.resolve(null):numeroGiaInRubrica(tel)).then(function(g){
+      if(g&&!window.confirm((g.cliente?'Il numero '+tel+' è già sulla mappa nel cliente «'+g.nome+'».':'Il numero '+tel+' è già in rubrica: «'+g.nome+'».')+'\n\nOK = aggiungo lo stesso il referente nuovo\nAnnulla = non salvo niente')){
+        bR.disabled=false;bR.textContent='＋ Aggiungi questo referente';return;}
+      bR.textContent='Salvo…';
+      return aggiungiReferente(c,miei,gs,nome,tel,stR).then(function(dest){closeOv();toast('Referente aggiunto in rubrica e sulla mappa ✓ (all\'altro arriva al giro del cloud)');setTimeout(function(){openDetail(dest,true);},900);});
+    }).catch(function(e){errR.textContent=e.message;bR.disabled=false;bR.textContent='＋ Aggiungi questo referente';});});
   var posBox=correggiPosizione(c,function(x){st.pos=x;if(x&&st.place){st.place=null;box.innerHTML='';}});
   var cerca=cercaLocale('',function(pl){st.place=pl;if(st.pos)posBox.azzera();zonaImposta(zsel,zonaPer(pl));
     var gia=S.clients.find(function(x){return x._id!==c._id&&(x.placeId||x.id)===pl.id;});
@@ -1215,8 +1295,10 @@ function formModifica(c,miei,gs){
         el('div',{cls:'flbl',style:'margin-top:0',text:'Prodotti'}),righe(PRODOTTI,v.prod),
         el('div',{cls:'flbl',text:'Sigilli (niente = neutri)'}),righe(SIGILLI,v.sig),el('div',{cls:'chips',style:'margin-top:6px'},[omg]),
         el('div',{cls:'flbl',text:'Pagamento'}),righe(PAGAMENTI,v.pag),
+        el('div',{cls:'flbl',text:'Condizioni (omaggi, sconti, prezzi, spedizione) — una per riga'}),fCond,
         el('div',{cls:'flbl',text:'Altro (note libere)'}),fAltro,
-        el('div',{cls:'flbl',text:'Ragione sociale · P.IVA · SDI'}),fAz,el('div',{style:'display:flex;gap:8px;margin-top:6px'},[fPiva,fSdi])]):null,
+        el('div',{cls:'flbl',text:'Ragione sociale · P.IVA · SDI · Codice fiscale'}),fAz,el('div',{style:'display:flex;gap:8px;margin-top:6px'},[fPiva,fSdi]),el('div',{style:'margin-top:6px'},[fCf])]):null,
+      el('div',{cls:'flbl',text:'Referenti (un contatto per persona)'}),apriR,boxR,
       el('div',{cls:'flbl',text:'Nome del locale (titolo della scheda)'}),fLocale,
       el('div',{cls:'flbl',text:'Locale su Google Maps — ora: '+(c.nomeGoogle||c.locale)+', '+(c.indirizzo||'')}),
       el('div',{cls:'msub',style:'margin:0 0 6px',text:c.posManuale?'📍 Ora la posizione è corretta a mano. Se scegli qui un locale di Google, si torna alla posizione di Google.':'Solo se l\'indirizzo è sbagliato: cerca il locale giusto.'}),cerca,box,
@@ -1229,7 +1311,9 @@ function formModifica(c,miei,gs){
     var cambiaLoc=!!pl&&(pl.id!==pid||!!c.posManuale),cambiaZona=zona!==c.zona,cambiaNome=locale!==c.locale;
     var pos=cambiaLoc?null:st.pos,cambiaPos=!!pos;  // 📍 posizione corretta a mano (scegliere un locale di Google la toglie)
     if(v.omaggio&&!Object.keys(v.sig).some(function(x){return v.sig[x];})){err.textContent='Hai scelto Omaggio: scegli anche il tipo di sigillo.';return;}
-    var dif=modificheScelte(v,v0,altro0,fAltro.value.trim());dif.unico=miei.length===1;
+    var dif=modificheScelte(v,v0,altro0,fAltro.value.trim(),cond0,condDaTesto(fCond.value));dif.unico=miei.length===1;
+    var cfNuovo=cfNorm(fCf.value),cambiaCf=cfNuovo!==cfNorm(cf);
+    if(!cfValido(cfNuovo)){err.textContent='Codice fiscale non valido: 16 lettere e numeri (persona) o 11 cifre (ditta).';return;}
     var orgNuova=orgNorm({az:fAz.value,piva:fPiva.value,sdi:fSdi.value}),orgPrima=orgNorm(org),cambiaOrg=JSON.stringify(orgNuova)!==JSON.stringify(orgPrima);
     var dmNuovo=cambiaLoc?dmDaPlace(pl,locale,zona):null;
     save.disabled=true;save.textContent='Salvo…';
@@ -1240,6 +1324,7 @@ function formModifica(c,miei,gs){
         var tit=orgNuova.piva?'P.IVA '+orgNuova.piva:((o.title||'')&&!/\d{6,}/.test(o.title)?o.title:'');
         var nuovaO={name:orgNuova.az,title:tit,department:orgNuova.sdi?'SDI '+orgNuova.sdi:'',type:o.type||'work'};
         body.organizations=(nuovaO.name||nuovaO.title||nuovaO.department?[nuovaO]:[]).concat(resto);campi.push('organizations');}
+      if(cambiaCf&&(!cfDi(p)||cfDi(p)===cfNorm(cf))){body.userDefined=conCf(p,cfNuovo);campi.push('userDefined');}  // codice fiscale (28/11)
       if(cambiaLoc||cambiaZona||cambiaNome||cambiaPos){var vecchio=cdato(p,'framezzino')||{};
         var d=Object.assign({placeId:pid},vecchio.senzaMappa?{}:vecchio);LOC.forEach(function(k){if(d[k]==null&&c[k]!=null)d[k]=c[k];});
         if(dmNuovo){Object.assign(d,dmNuovo);delete d.posManuale;}if(cambiaPos)Object.assign(d,datiPos(pos,d));
@@ -1408,8 +1493,9 @@ var GUIDA=[
     'Senza «Tram» davanti il contatto resta personale: niente mappa, non passa all\'altro, nessun avviso.']],
   ['Le note: una riga per tipo',[
     'Prodotti: S, M, L, Magnum, XXL, Rettangolari, Panini, Toast, Tostoni, Maxi tostoni, Galaxy, Club, Veline, Sacchetti',
-    'Sigilli: Personalizzati, Colorati, Smile, Produzione propria. «(omaggio)» solo se sono regalati. Neutri = niente riga.',
-    'Pagamento: Bonifico, Contrassegno, PayPal, Spedizione',
+    'Sigilli: Personalizzati, Colorati, Smile, Produzione propria, Produzione artigianale. «(omaggio)» solo se sono regalati. Neutri = niente riga.',
+    'Pagamento: Bonifico, Contrassegno, PayPal, Spedizione, RiBa',
+    'Condizioni: omaggi, sconti, prezzi speciali, spedizione, separati da «;». Es. «Condizioni: 10 L + 1 L omaggio; sconto 5%; prezzo L 20 €; spedizione gratis». Si vedono nella scheda e si cambiano in ✏️ Modifica (una per riga).',
     'Altro: tutto il resto (prezzi, orari, «ex …», altre persone). Esempio: «Prodotti: L, Maxi tostoni» poi a capo «Sigilli: Personalizzati (omaggio)».',
     'Mai i prodotti nel nome. «Tostoni» e «Maxi tostoni» sono due prodotti diversi.']],
   ['Il 🔄 e i «Da decidere»',[
@@ -1419,7 +1505,8 @@ var GUIDA=[
     'Da decidere: 📍 Sistema qui (scegli il locale, o «Cliente senza locale»), 🗺️ Scegli la zona, possibile doppione → «È un doppione: elimina» oppure «Sono diversi», ✓ Va bene così. Li vedete tutti e due: basta che lo sistemi uno.',
     'Sotto il numero dei locali c\'è quando è stata aggiornata la mappa l\'ultima volta e da chi.']],
   ['Modificare, ex clienti, cancellare',[
-    'Scheda del locale → ✏️ Modifica: prodotti, sigilli, pagamento, note, ditta, nome, locale e zona. Va in rubrica e sulla mappa; all\'altro arriva al giro del cloud (o subito con «Sistema la rubrica»).',
+    'Scheda del locale → ✏️ Modifica: prodotti, sigilli, pagamento, condizioni, note, ditta e codice fiscale, nome, locale e zona. Va in rubrica e sulla mappa; all\'altro arriva al giro del cloud (o subito con «Sistema la rubrica»).',
+    'Un\'altra persona dello stesso locale: Modifica → «＋ Aggiungi referente» (nome e telefono). Diventa un contatto suo «Tram Comune Locale Nome», con i dati del locale.',
     'Non è più cliente: Modifica → 🚫 Non è più cliente. Non si cancella: resta in rubrica come «Ex Tram …» (etichetta «Ex clienti Framezzino») ed esce dalla mappa. Passa anche all\'altro.',
     'Vedere gli ex clienti: tasto «🗂️ Ex clienti» sulla mappa → nascosti, insieme ai clienti (pallini grigi «ex») o solo loro. Tocca un ex cliente → «↩ Ripristina come cliente» (torna nei clienti e nella sua zona, anche per l\'altro). Anche da 🔄 → Ex clienti.',
     'Eliminare davvero: Modifica (o la scheda dell\'ex cliente) → 🗑️ Elimina definitivamente, con due conferme. Sparisce anche all\'altro e dalla mappa; resta 30 giorni nel cestino di Google Contatti.',
